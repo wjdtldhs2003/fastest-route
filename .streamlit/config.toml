@@ -1,0 +1,9 @@
+# Streamlit Community Cloud 공개 시연용 설정. 키는 여기에 두지 않고 배포 서비스의 Secrets 에만 넣는다.
+[client]
+toolbarMode = "minimal"
+
+[browser]
+gatherUsageStats = false
+
+[server]
+runOnSave = false

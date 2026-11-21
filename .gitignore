@@ -1,0 +1,19 @@
+# 키와 비밀
+.streamlit/secrets.toml
+.env
+*.env
+
+# 전체 수집 기록과 그 사본(제출·공개하지 않음)
+*.sqlite
+*.sqlite-*
+*.sqlite3
+data/records*
+data/*.bak
+# 공개 시연의 실제 기록 장면: 장면 앞뒤만 옮긴 작은 기록(pc/pc_demo.py 가 만들고 같은 결과를 확인한 것)만 올린다
+!data/records.sqlite
+
+# 파이썬 부산물
+__pycache__/
+*.pyc
+.venv/
+venv/
