@@ -1,4 +1,4 @@
-"""유령 환승 필터 라우터의 화면(명세 §6 ~ §8).
+"""가장 빨리 도착하는 길찾기의 화면(명세 §6 ~ §8).
 
 실행: `python app.py` (실행기가 밝은 테마와 회색 기본 색을 붙여 `streamlit run` 을 새 프로세스로 띄운다, §8.2).
 `streamlit run app.py` 로 직접 띄울 때는 `--theme.base=light --theme.primaryColor=#52514e` 를 붙인다.
@@ -2093,6 +2093,9 @@ def setting_defaults() -> dict[str, Any]:
     }
 
 
+APP_TITLE = "가장 빨리 도착하는 길찾기"
+APP_SUBTITLE = "놓치기 쉬운 환승을 걸러 실제로 가장 빨리 닿는 길"  # 휴대폰에서 한 줄(§6.5)
+
 SESSION_DEFAULTS: Mapping[str, Any] = {
     "data_mode": DataMode.SIMULATION.value,
     "view_mode": "SIMPLE",
@@ -2220,6 +2223,17 @@ def _on_gps_switch(scenario_id: str) -> None:
 
 def _on_origin_kind_change() -> None:
     drop_keys(st.session_state, ("gps_note",))
+
+
+def first_example(state: MutableMapping[str, Any], scenario: Scenario) -> None:
+    """첫 화면(§6.3 30단계): 시나리오에 예시 경로가 있으면 첫 예시의 출발·목적지 장소를 둔다. 없으면 아무것도 바꾸지 않는다."""
+    if not scenario.examples:
+        return
+    name_of = {place.node_id: place.name for place in scenario.places}
+    example = scenario.examples[0]
+    for key, value in (("origin_kind", "PLACE"), ("origin_place", name_of[example.origin_node_id]),
+                       ("dest_kind", "PLACE"), ("dest_place", name_of[example.destination_node_id])):
+        store_value(state, key, value)
 
 
 def _on_example(origin_place: str, dest_place: str) -> None:
@@ -3563,9 +3577,8 @@ def init_session(ctx: DataContext) -> None:
             state[key] = dict(value) if isinstance(value, dict) else value
     if "scenario_id" not in state:
         state["scenario_id"] = ctx.entries[0][0]
-        first = scene_choices(ctx)
-        if first:  # 실제 기록 장면이 있으면 첫 화면을 첫 장면으로 연다(§6.11)
-            scene_apply(state, first[0])
+        if state.get("view_mode") != "DETAIL":  # 간단히 보기 첫 화면은 첫 시나리오의 첫 예시 경로로 연다(§6.3 30단계)
+            first_example(state, scenario_object(ctx.entries[0][2]))
     for key, value in setting_defaults().items():
         if key in KEEP_KEYS:
             continue
@@ -3870,7 +3883,8 @@ def fallback_message(p: Prepared) -> str | None:
 
 def render_header(p: Prepared, output: EngineOutput | None, moved: Query | None, simple: bool = False) -> None:
     state = st.session_state
-    st.title("유령 환승 필터 라우터")
+    st.title(APP_TITLE)
+    st.caption(APP_SUBTITLE)
     popovers: list[tuple[str, str | None, list[str]]] = []
     if output is not None and output.unverified_node_ids:
         names = node_names(p.display)
@@ -6933,7 +6947,7 @@ def _node_latlon(scenario: Scenario, node_id: str) -> tuple[float, float] | None
 
 def main() -> None:
     """한 번의 실행(§8.4 의 1 ~ 8): 사이드바가 입력을 정하고, 엔진을 (캐시를 거쳐) 부르고, 본문을 그린다."""
-    st.set_page_config(page_title="유령 환승 필터 라우터", page_icon=":material/alt_route:", layout="wide",
+    st.set_page_config(page_title=APP_TITLE, page_icon=":material/alt_route:", layout="wide",
                        initial_sidebar_state=SIDEBAR_WIDTH_PX)
     tokens = theme_tokens()
     st.html(page_css(tokens))
@@ -7137,7 +7151,7 @@ def _plain(markup: str) -> str:
 class _Screen:
     """AppTest 한 개와 그 검사 도우미. 실행마다 화면 예외를 판정에 넣는다."""
 
-    def __init__(self, checker: _Checker, maps: _MapCalls, view: str | None = "DETAIL") -> None:
+    def __init__(self, checker: _Checker, maps: _MapCalls, view: str | None = "DETAIL", scenario: str | None = None) -> None:
         from streamlit.testing.v1 import AppTest
 
         self.c = checker
@@ -7145,6 +7159,8 @@ class _Screen:
         self.at = AppTest.from_file(str(_APP_FILE), default_timeout=60)
         if view is not None:  # UI-01 ~ UI-29 는 자세히 보기로 시작한다(§8.7). UI-30 은 None(기본값 "SIMPLE")
             self.at.session_state["view_mode"] = view
+        if scenario is not None:  # 첫 실행 전에 시나리오를 정해 두면 첫 화면 규칙(첫 예시 경로, §6.3 30단계)을 건너뛴다
+            self.at.session_state["scenario_id"] = scenario
 
     def run(self, label: str = "실행") -> "_Screen":
         self.at.run()
@@ -7507,7 +7523,8 @@ def _ui01(c: _Checker, folder: Path, maps: _MapCalls) -> None:
     for scenario_id in ("A", "B", ce.GOLDEN_ID):
         if s.state("scenario_id") != scenario_id:
             s.scenario(scenario_id)
-        c.eq(f"① {scenario_id}: 제목", ["유령 환승 필터 라우터"], [item.value for item in s.at.title])
+        c.eq(f"① {scenario_id}: 제목", [APP_TITLE], [item.value for item in s.at.title])
+        c.true(f"① {scenario_id}: 제목 아래 한 줄 설명", APP_SUBTITLE in [item.value for item in s.at.main.caption])
         c.true(f"① {scenario_id}: 바닥글", _FOOTER in [item.value for item in s.at.main.caption])
         strings = s.strings()
         for word in _BANNED_WORDS:
@@ -9724,6 +9741,15 @@ def _ui31(c: _Checker, folder: Path, maps: _MapCalls) -> None:
     out1, out2 = ce.run_engine(a, at_node(e1), config), ce.run_engine(a, at_node(e2), config)
     # ① ② 간단히 보기, 접힘 안
     s = _Screen(c, maps, view=None).run("간단히 보기 첫 실행 (UI-31)")
+    c.eq("⓪ 첫 화면은 첫 예시 경로 E1 (30단계): 시나리오, 출발·목적지 상태", ("A", "PLACE", name_of[e1.origin_node_id], "PLACE",
+                                                              name_of[e1.destination_node_id]),
+         (s.state("scenario_id"), s.state("origin_kind"), s.state("origin_place"), s.state("dest_kind"), s.state("dest_place")))
+    c.eq("⓪ 첫 화면 답 카드 = E1 엔진 결과", [easy_answer_html(out1, a, None, _leave_expect(a, at_node(e1), config))],
+         s.htmls("mr-answer"))
+    c.true("⓪ 첫 화면 주의 카드: 기존 길찾기 방식의 1위를 보여 줌", len(s.htmls("mr-caution")) == 1, s.htmls("mr-caution"))
+    first = _Screen(c, maps).run("자세히 보기 첫 실행 (UI-31 ⓪)")
+    c.eq("⓪ 자세히 보기로 시작하면 시나리오 기본 질의 그대로", (query_defaults(a)["origin_kind"], query_defaults(a)["dest_place"]),
+         (first.state("origin_kind"), first.state("dest_place")))
     s.put("trip_edit", True)
     inside = [item for item in s.at.main.expander if item.label == TRIP_EDIT_LABEL]
     buttons = [(item.key, item.label) for item in inside[0].button if str(item.key).startswith("example_")] if inside else []
@@ -9861,7 +9887,7 @@ def _ui34(c: _Checker, folder: Path, maps: _MapCalls) -> None:
     s.set("segmented_control", "view_mode", "DETAIL")
     c.eq("④ 자세히 보기: 사이드바의 마감 켜기", ["도착 마감 시각"], [item.label for item in s.at.sidebar.toggle if item.key == "use_deadline"])
     # ⑤ 출발 여유가 없는 때
-    s = _Screen(c, maps, view=None).run("간단히 보기 첫 실행 (UI-34 ⑤)")
+    s = _Screen(c, maps, view=None, scenario="A").run("간단히 보기, 시나리오 기본 질의 (UI-34 ⑤)")
     c.eq("⑤ A 기본(차량 안 출발): 출발 여유 없음", 0, s.htmls("mr-answer")[0].count("mr-aleave") if s.htmls("mr-answer") else None)
     s.scenario("B").click("alt_pick_1")
     picked = s.htmls("mr-answer")
@@ -10239,8 +10265,13 @@ def _ui43(c: _Checker, folder: Path, maps: _MapCalls) -> None:
     want_state = (syn.id, "REPLAY", datetime.date(2026, 11, 2), datetime.time(8, 0), 0)
     got_state = lambda: (s.state("scenario_id"), s.state("data_mode"), s.state("replay_date"), s.state("replay_time"),
                          s.state("depart_offset_s"))
-    c.eq("④ 첫 실행은 첫 장면으로 열림: 시나리오, 기록 재생, 날짜와 시각, 출발 늦추기 0, 고른 값 0", (want_state, 0),
-         (got_state(), s.at.button_group(key="scene_pick").value if has_pick else None))
+    c.eq("④ 첫 실행은 장면이 있어도 첫 시나리오의 첫 예시 경로(30단계): 시나리오 A, 시뮬레이션, 고른 장면 없음",
+         ("A", "SIMULATION", None), (s.state("scenario_id"), s.state("data_mode"),
+                                     s.at.button_group(key="scene_pick").value if has_pick else "없음"))
+    if has_pick:
+        s.set("button_group", "scene_pick", 0)
+    c.eq("④ 장면을 고르면: 시나리오, 기록 재생, 날짜와 시각, 출발 늦추기 0, 고른 값 0", (want_state, 0),
+         (got_state(), s.at.button_group(key="scene_pick").value if s.has("button_group", "scene_pick") else None))
     c.true("④ 배지 '2026-11-02(월) 08:00:00 기록 재생'", "2026-11-02(월) 08:00:00 기록 재생" in s.chips(), s.chips())
     scenario, sources = _replayed(truth, syn, config, models, _kst_unix(2026, 11, 2, 8, 0))
     want = easy_answer(ce.run_engine(scenario, syn.default_query, config, sources), scenario)
@@ -10270,7 +10301,7 @@ def _ui38(c: _Checker, folder: Path, maps: _MapCalls) -> None:
     def toggles(block: Any) -> list[str]:
         return [getattr(item, "key", "") for item in block.get("toggle") if getattr(item, "key", "") in keys]
 
-    s = _Screen(c, maps, view=None).run("간단히 보기 첫 실행 (UI-38)").scenario("A")
+    s = _Screen(c, maps, view=None, scenario="A").run("간단히 보기, 시나리오 기본 질의 (UI-38)")
     c.eq("① 간단히 보기: 본문에 버스·지하철·따릉이, 사이드바에는 없음", (keys, []), (toggles(s.at.main), toggles(s.at.sidebar)))
     c.eq("① 이름표", MODES_EASY_LABEL, s.html_text("mr-ctl-label"))
     c.true("① A 기본의 추천은 따릉이를 씀", "따릉이" in s.html_text("mr-answer"), s.html_text("mr-answer"))
@@ -10432,7 +10463,7 @@ def _ui32(c: _Checker, folder: Path, maps: _MapCalls) -> None:
          [(row.title, row.note) for row in rows_60])
     # ⑦ A 기본: 지금 할 일과 기존 1위 덧말
     exp_a = ce.run_engine(a, a.default_query, config)
-    s = _Screen(c, maps, view=None).run("간단히 보기 첫 실행 (⑦)")
+    s = _Screen(c, maps, view=None, scenario="A").run("간단히 보기, 시나리오 기본 질의 (⑦)")
     c.eq("⑦ A 답 카드", [easy_answer_html(exp_a, a)], s.htmls("mr-answer"))
     c.true("⑦ A 지금 할 일", "지금 할 일: 삼성역 2호선 승강장에서 내리기 (19:21 도착)" in s.html_text("mr-answer"), s.html_text("mr-answer"))
     c.eq("⑦ A 첫 줄 덧말", "기존 길찾기 방식이 타라는 차는 놓치기 쉬워, 이 앱은 탈 수 있는 차로 다시 계산했습니다.",
@@ -10579,7 +10610,7 @@ def _ui30(c: _Checker, folder: Path, maps: _MapCalls) -> None:
                             config)
     counter = _Counted(ce.run_engine)
     with _replaced(ce, "run_engine", counter):
-        s = _Screen(c, maps, view=None).run("간단히 보기 첫 실행")
+        s = _Screen(c, maps, view=None, scenario="A").run("간단히 보기, 시나리오 기본 질의")
         c.eq("⑤ 보기 기본값", "SIMPLE", s.state("view_mode"))
         c.eq("⑤ 보기 선택지", ["간단히", "자세히"], s.options("segmented_control", "view_mode"))
         c.eq("⑤ 비교 패널, KPI, 탭, 경로 목록 없음", (0, 0, 0, False),
