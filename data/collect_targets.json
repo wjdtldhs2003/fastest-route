@@ -1,29 +1,126 @@
 {
   "poll_s": 75,
-  "routes": [{"route_id": "100100025", "name": "146"},
-             {"route_id": "100100022", "name": "143"},
-             {"route_id": "100100057", "name": "360"},
-             {"route_id": "100100019", "name": "140"},
-             {"route_id": "124000036", "name": "345"},
-             {"route_id": "100100073", "name": "470"}],
-  "bike_areas": [{"name": "강남역", "lat": 37.4979278, "lon": 127.0275833, "radius_m": 2500},
-                 {"name": "삼성역", "lat": 37.5087444, "lon": 127.0635194, "radius_m": 2500}],
-  "signal_areas": [{"name": "삼성역", "lat": 37.5087444, "lon": 127.0635194, "radius_m": 600},
-                   {"name": "봉은사역", "lat": 37.514210, "lon": 127.060143, "radius_m": 600},
-                   {"name": "강남역", "lat": 37.4979278, "lon": 127.0275833, "radius_m": 600},
-                   {"name": "신논현역", "lat": 37.50444, "lon": 127.024417, "radius_m": 600}],
-  "windows": [{"name": "평일 아침", "day_types": ["WEEKDAY"], "start": "07:30", "end": "09:00"},
-              {"name": "평일 저녁", "day_types": ["WEEKDAY"], "start": "18:00", "end": "19:30"}],
-  "holidays": ["2026-12-25", "2027-01-01"],
-  "daily_call_limits": {"bus_arrival_all": 1000, "signal": 5000, "signal_intersections": 5000},
-  "bike_history": {"columns": {"rent_time": "대여일시", "rent_station": "대여대여소ID", "return_time": "반납일시",
-                               "return_station": "반납대여소ID", "minutes": "이용시간(분)", "distance_m": "이용거리(M)"},
-                   "station_match": "ID_COLUMN"},
-  "signal_api": {"enabled": false, "verified": false, "field_map": {
-    "items": "body.items.item", "signal_id": "crsrdId", "directions": "nt,et,st,wt,ne,se,sw,nw",
-    "state": "{dir}PdsgSttsNm", "remaining": "{dir}PdsgRmndCs", "observed_at": "totDt", "time_format": "%Y%m%d%H%M%S",
-    "green_values": "protected-Movement-Allowed,permissive-Movement-Allowed", "red_values": "stop-And-Remain",
-    "remaining_scale": "0.1", "remaining_unknown_values": "36001",
-    "intersection_items": "body.items.item", "intersection_id": "crsrdId",
-    "intersection_lat": "mapCtptIntLat", "intersection_lon": "mapCtptIntLot"}}
+  "routes": [
+    {
+      "route_id": "100100025",
+      "name": "146"
+    },
+    {
+      "route_id": "100100022",
+      "name": "143"
+    },
+    {
+      "route_id": "100100057",
+      "name": "360"
+    },
+    {
+      "route_id": "100100019",
+      "name": "140"
+    },
+    {
+      "route_id": "124000036",
+      "name": "345"
+    },
+    {
+      "route_id": "100100073",
+      "name": "470"
+    }
+  ],
+  "bike_areas": [
+    {
+      "name": "강남역",
+      "lat": 37.4979278,
+      "lon": 127.0275833,
+      "radius_m": 2500
+    },
+    {
+      "name": "삼성역",
+      "lat": 37.5087444,
+      "lon": 127.0635194,
+      "radius_m": 2500
+    }
+  ],
+  "signal_areas": [
+    {
+      "name": "삼성역",
+      "lat": 37.5087444,
+      "lon": 127.0635194,
+      "radius_m": 600
+    },
+    {
+      "name": "봉은사역",
+      "lat": 37.51421,
+      "lon": 127.060143,
+      "radius_m": 600
+    },
+    {
+      "name": "강남역",
+      "lat": 37.4979278,
+      "lon": 127.0275833,
+      "radius_m": 600
+    },
+    {
+      "name": "신논현역",
+      "lat": 37.50444,
+      "lon": 127.024417,
+      "radius_m": 600
+    }
+  ],
+  "windows": [
+    {
+      "name": "평일 아침",
+      "day_types": [
+        "WEEKDAY"
+      ],
+      "start": "07:30",
+      "end": "09:00"
+    },
+    {
+      "name": "평일 저녁",
+      "day_types": [
+        "WEEKDAY"
+      ],
+      "start": "18:00",
+      "end": "19:30"
+    }
+  ],
+  "holidays": [
+    "2026-12-25",
+    "2027-01-01"
+  ],
+  "daily_call_limits": {
+    "bus_arrival_all": 1000,
+    "signal": 5000,
+    "signal_intersections": 5000
+  },
+  "bike_history": {
+    "columns": {
+      "rent_time": "대여일시",
+      "rent_station": "대여대여소ID",
+      "return_time": "반납일시",
+      "return_station": "반납대여소ID",
+      "minutes": "이용시간(분)",
+      "distance_m": "이용거리(M)"
+    },
+    "station_match": "ID_COLUMN"
+  },
+  "signal_api": {
+    "enabled": true,
+    "verified": true,
+    "source": "TDATA",
+    "min_call_interval_s": 300,
+    "field_map": {
+      "items": "items",
+      "signal_id": "itstId",
+      "directions": "nt,et,st,wt,ne,se,sw,nw",
+      "state": "{dir}PdsgStatNm",
+      "remaining": "{dir}PdsgRmdrCs",
+      "observed_at": "trsmUtcTime",
+      "time_format": "epoch_ms",
+      "green_values": "protected-Movement-Allowed,permissive-Movement-Allowed",
+      "red_values": "stop-And-Remain",
+      "remaining_scale": "0.1",
+      "remaining_unknown_values": "36001"
+    }
+  }
 }

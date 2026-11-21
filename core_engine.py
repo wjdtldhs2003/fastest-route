@@ -45,6 +45,7 @@ import statistics
 import string
 import sys
 import tempfile
+import threading
 import time
 import unicodedata
 import urllib.parse
@@ -66,6 +67,7 @@ from models_and_config import (
     DEFAULT_TARGETS_JSON,
     ENV_DATA_GO_KR_KEY,
     ENV_KAKAO_KEY,
+    ENV_TDATA_KEY,
     ENV_SEOUL_KEY,
     FARE_NOTE_FIELDS,
     FARE_NOTES,
@@ -6597,13 +6599,13 @@ def _csv_values(text: str | None) -> tuple[str, ...]:
 
 # --- 키 가리기 (§3.6, §5.5) ---
 
-_DEFAULT_KEY_ENVS = (ENV_SEOUL_KEY, ENV_DATA_GO_KR_KEY, ENV_KAKAO_KEY)
+_DEFAULT_KEY_ENVS = (ENV_SEOUL_KEY, ENV_DATA_GO_KR_KEY, ENV_KAKAO_KEY, ENV_TDATA_KEY)
 
 
 def _key_env_names(config: EngineConfig | None) -> tuple[str, ...]:
     names = list(_DEFAULT_KEY_ENVS)
     if config is not None:
-        names += [config.env_seoul_key, config.env_data_go_kr_key, config.env_kakao_key]
+        names += [config.env_seoul_key, config.env_data_go_kr_key, config.env_kakao_key, config.env_tdata_key]
     return tuple(dict.fromkeys(names))
 
 
@@ -6612,6 +6614,7 @@ def _key_env_name(spec: ApiSpec, config: EngineConfig) -> str:
         ENV_SEOUL_KEY: config.env_seoul_key,
         ENV_DATA_GO_KR_KEY: config.env_data_go_kr_key,
         ENV_KAKAO_KEY: config.env_kakao_key,
+        ENV_TDATA_KEY: config.env_tdata_key,
     }
     return mapping.get(spec.key_env, spec.key_env)
 
@@ -6801,6 +6804,14 @@ def _signal_scale(field_map: dict[str, str]) -> float:
     return scale
 
 
+def _signal_time(value: Any, time_format: str) -> float | None:
+    """신호 관측 시각(유닉스 초). 형식이 "epoch_ms" 이면 유닉스 밀리초(t-data, 31단계), 아니면 한국 표준시 strptime 형식."""
+    if time_format.strip() == "epoch_ms":
+        number = _num(value)
+        return None if number is None else number / 1000.0
+    return _parse_kst_time(value, (time_format,))
+
+
 def _parse_signal_rows(rows: Iterable[dict], field_map: dict[str, str]) -> tuple[list[SignalObservation], int]:
     directions = _signal_directions(field_map)
     scale = _signal_scale(field_map)
@@ -6811,7 +6822,7 @@ def _parse_signal_rows(rows: Iterable[dict], field_map: dict[str, str]) -> tuple
     skipped = 0
     for row in rows:
         base_id = _text(row.get(field_map["signal_id"]))
-        obs_unix = _parse_kst_time(row.get(field_map["observed_at"]), (field_map["time_format"],))
+        obs_unix = _signal_time(row.get(field_map["observed_at"]), field_map["time_format"])
         for direction in directions:
             state_text = _text(row.get(field_map["state"].replace("{dir}", direction)))
             if state_text is None:
@@ -6899,8 +6910,10 @@ def _decode_body(text: str) -> tuple[dict | None, str]:
         payload = json.loads(body)
     except ValueError as exc:
         return None, f"JSON 해석 실패: {exc}"
+    if isinstance(payload, list):  # t-data 신호는 맨 위가 행의 배열이다(31단계): {"items": 배열} 로 감싼다
+        return {"items": payload}, ""
     if not isinstance(payload, dict):
-        return None, "JSON 해석 실패: 맨 위가 객체가 아닙니다"
+        return None, "JSON 해석 실패: 맨 위가 객체도 배열도 아닙니다"
     return payload, ""
 
 
@@ -7111,6 +7124,8 @@ def _signal_problem(targets: CollectTargets) -> str | None:
         return "꺼짐"
     if not api.verified:
         return "명세 미확인"
+    if api.source == "TDATA":
+        return "실시간 전용(t-data)"  # 수집기는 지역의 교차로 목록이 있는 전국 API 만 모은다(31단계)
     try:
         _signal_directions(api.field_map)
         _signal_scale(api.field_map)
@@ -8133,9 +8148,66 @@ def _key_present(spec_name: str, config: EngineConfig) -> bool:
     return bool((os.environ.get(_key_env_name(API_SPECS[spec_name], config)) or "").strip())
 
 
+def _signal_spec_name(targets: CollectTargets | None) -> str:
+    """신호 원천의 API 이름: 전국 API "signal", 서울 t-data "signal_tdata" (§5.2, 31단계)."""
+    return "signal_tdata" if targets is not None and targets.signal_api.source == "TDATA" else "signal"
+
+
+# t-data 신호(§5.2, 31단계): API 전체에 반복 호출 제한(300초)이 있어, 한 프로세스 안의 모든 세션이 같은 기록을 나눠 쓴다.
+# 교차로 ID → (받은 시각 유닉스 초, 행들). 마지막 호출 시각은 성공·실패와 상관없이 적는다(실패도 한 번 부른 것이다).
+_TDATA_LOCK = threading.Lock()
+_TDATA_ROWS: dict[str, tuple[float, list[dict]]] = {}
+_TDATA_LAST_CALL: list[float] = []
+_TDATA_TRIED: dict[str, float] = {}  # 교차로 ID → 마지막으로 부른 시각(실패한 교차로가 다른 교차로의 차례를 빼앗지 않게)
+_TDATA_MAX_AGE_S = 900.0  # 이보다 오래된 받은 기록은 버린다(주기가 118~150초로 흔들려 오래 이으면 어긋난다)
+
+
+def tdata_reset() -> None:
+    """t-data 신호 기록과 마지막 호출 시각을 비운다(검사용, 새 프로세스와 같은 상태)."""
+    with _TDATA_LOCK:
+        _TDATA_ROWS.clear()
+        _TDATA_LAST_CALL.clear()
+        _TDATA_TRIED.clear()
+
+
+def _tdata_signal_rows(
+    client: httpx.Client | None, intersections: Sequence[str], targets: CollectTargets, config: EngineConfig, now_unix: float
+) -> tuple[list[dict], SourceState, str, int]:
+    """t-data 신호 행(§5.2, 31단계): 마지막 호출에서 `min_call_interval_s` 가 지났으면 가장 오래 부르지 않은 교차로 하나를 부르고,
+    지금까지 받아 둔 그 교차로들의 행을 모두 돌려준다. 돌려주는 값은 (행, 상태, 사유, 시도 수).
+
+    받아 둔 지 `_TDATA_MAX_AGE_S` (900초)가 지난 행은 쓰지 않는다. 5xx 는 다시 부르지 않는다.
+    받아 둔 행이 하나라도 있으면 성공이다. 부르지 않았고 받아 둔 행도 없으면 건너뜀("조회 간격 대기"), 불렀는데 실패했고
+    받아 둔 행도 없으면 실패다."""
+    field_map = targets.signal_api.field_map
+    wanted = sorted(set(intersections))
+    attempts, reason, failed = 0, "", False
+    with _TDATA_LOCK:
+        due = not _TDATA_LAST_CALL or now_unix - _TDATA_LAST_CALL[-1] >= targets.signal_api.min_call_interval_s
+        if due and wanted:
+            target = min(wanted, key=lambda item: (_TDATA_TRIED.get(item, -math.inf), item))
+            _TDATA_LAST_CALL[:] = [now_unix]
+            _TDATA_TRIED[target] = now_unix
+            # 5xx 를 다시 부르지 않는다: 목록에 없는 교차로는 늘 500 이고, 다시 부르면 반복 호출 제한(429)에 걸린다
+            once = config.model_copy(update={"api_retries": 0})
+            rows, results = fetch_pages(client, "signal_tdata", {"itstId": target}, once, items_path=field_map["items"])
+            state, reason, attempts = _pages_state(results)
+            if state == SourceState.SUCCESS:
+                _TDATA_ROWS[target] = (now_unix, rows)
+            else:
+                failed = True
+        kept = [row for item in wanted if item in _TDATA_ROWS and now_unix - _TDATA_ROWS[item][0] <= _TDATA_MAX_AGE_S
+                for row in _TDATA_ROWS[item][1]]
+    if kept:
+        return kept, SourceState.SUCCESS, "", attempts
+    if failed:
+        return [], SourceState.FAILED, reason, attempts
+    return [], SourceState.SKIPPED, "조회 간격 대기", attempts
+
+
 def _live_signal_problem(targets: CollectTargets | None, config: EngineConfig) -> str | None:
     """실시간에서 신호를 부르지 않는 이유(§5.2): 키 없음, 명세 미확인(확인 전이거나 신호 역할이 빔), 꺼짐. 부르면 None."""
-    if not _key_present("signal", config):
+    if not _key_present(_signal_spec_name(targets), config):
         return "키 없음"
     if targets is None or not targets.signal_api.verified:
         return "명세 미확인"
@@ -8232,8 +8304,12 @@ def apply_live_overrides(
             signal_status = (SourceState.SKIPPED, problem, 0, 0)
         else:
             field_map = targets.signal_api.field_map
-            rows, results = fetch_pages(client, "signal", {}, config, items_path=field_map["items"])
-            state, reason, attempts = _pages_state(results)
+            if targets.signal_api.source == "TDATA":  # 교차로마다 부른다: 공식 ID "교차로:방향" 의 앞부분(31단계)
+                bases = [phase.official_id.split(":", 1)[0] for phase in signals if phase.official_id]
+                rows, state, reason, attempts = _tdata_signal_rows(client, bases, targets, config, t0)
+            else:
+                rows, results = fetch_pages(client, "signal", {}, config, items_path=field_map["items"])
+                state, reason, attempts = _pages_state(results)
             fetched = 0
             if state == SourceState.SUCCESS:
                 parsed, _ = _parse_signal_rows(rows, field_map)
@@ -11446,6 +11522,7 @@ _EXPECTED_DEFAULTS: dict[str, Any] = {
     "env_seoul_key": "SEOUL_OPENAPI_KEY",
     "env_data_go_kr_key": "DATA_GO_KR_SERVICE_KEY",
     "env_kakao_key": "KAKAO_REST_API_KEY",
+    "env_tdata_key": "SEOUL_TDATA_API_KEY",
     "data_dir": "data",
     "holidays": (),
     "depart_offset_max_s": 1800.0,
@@ -12366,6 +12443,7 @@ _FAKE_KEYS: tuple[tuple[str, str], ...] = (
     (ENV_SEOUL_KEY, "TESTKEY-SEOUL"),
     (ENV_DATA_GO_KR_KEY, "TESTKEY-DATA"),
     (ENV_KAKAO_KEY, "TESTKEY-KAKAO"),
+    (ENV_TDATA_KEY, "TESTKEY-TDATA"),
 )
 
 
@@ -12547,7 +12625,7 @@ class _Router:
 
     _MARKERS = (("getArrInfoByRouteAll", "bus"), ("/bikeList/", "bike"), ("tl_drct_info", "signal"),
                 ("crsrd_map_info", "intersections"), ("getStaionByRoute", "route_stations"),
-                ("SearchSTNTimeTableByIDService", "timetable"), ("routing/walk", "kakao"))
+                ("SearchSTNTimeTableByIDService", "timetable"), ("routing/walk", "kakao"), ("v2xSignalPhaseTimingFusion", "tdata"))
 
     def __init__(self, **routes: ResponseMaker) -> None:
         self.routes = dict(routes)
@@ -20032,6 +20110,114 @@ def _rp5(p: _Probe) -> None:
     p.true("⑩ 결과 객체의 repr 과 로그에 키 문자열이 없다", not leaks, f"로그 {len(logs.lines)}줄, 노출 {len(leaks)}")
 
 
+
+def _rt_targets(**api_changes: Any) -> CollectTargets:
+    """RT 의 수집 대상: 신호 원천 t-data (31단계 배포 값과 같은 field_map, 호출 간격 300초)."""
+    api = json.loads(DEFAULT_TARGETS_JSON)["signal_api"]
+    api.update(
+        enabled=True, verified=True, source="TDATA", min_call_interval_s=300,
+        field_map={"items": "items", "signal_id": "itstId", "directions": "nt,et,st,wt,ne,se,sw,nw", "state": "{dir}PdsgStatNm",
+                   "remaining": "{dir}PdsgRmdrCs", "observed_at": "trsmUtcTime", "time_format": "epoch_ms",
+                   "green_values": "protected-Movement-Allowed,permissive-Movement-Allowed", "red_values": "stop-And-Remain",
+                   "remaining_scale": "0.1", "remaining_unknown_values": "36001"},
+    )
+    api.update(api_changes)
+    return _targets_t(signal_api=api)
+
+
+def _rt_rows(itst: str, observed_ms: int, nw_state: str, nw_cs: int) -> list[dict[str, Any]]:
+    """t-data 응답 본문(맨 위가 배열): 1초 앞의 행과 그 시각의 행. nt 는 남은 시간 모름(36001), 나머지 방향은 비움."""
+    def row(ms: int, cs: int) -> dict[str, Any]:
+        return {"itstId": itst, "trsmUtcTime": ms, "nwPdsgStatNm": nw_state, "nwPdsgRmdrCs": cs,
+                "ntPdsgStatNm": "stop-And-Remain", "ntPdsgRmdrCs": 36001}
+    return [row(observed_ms - 1000, nw_cs + 10), row(observed_ms, nw_cs)]
+
+
+def _rt(p: _Probe) -> None:
+    """t-data 실시간 신호(§4.8, §5.2, 31단계): 교차로를 300초에 하나씩 부르고, 받아 둔 기록으로 신호를 연다."""
+    truth, config = _synthetic_world()
+    base = _syn_scenario(truth)
+    officials = {"SG3": "1537:nw", "SG4": "1619:nw"}
+    base = base.model_copy(update={"signals": tuple(
+        phase.model_copy(update={"official_id": officials.get(phase.id, phase.official_id)}) for phase in base.signals)})
+    targets = _rt_targets()
+    now = 1_794_870_010.0
+    replies: dict[str, list[httpx.Response]] = {}
+
+    def tdata(request: httpx.Request) -> httpx.Response:
+        queue = replies.get(request.url.params.get("itstId") or "", [])
+        return queue.pop(0) if queue else httpx.Response(500, text="Internal Server Error")
+
+    def ok(itst: str, observed_ms: int, state: str, cs: int) -> httpx.Response:
+        return httpx.Response(200, json=_rt_rows(itst, observed_ms, state, cs))
+
+    router = _rp5_router()
+    router.routes["tdata"] = tdata
+
+    def run(at: float) -> tuple[dict[str, tuple[bool, float | None]], tuple]:
+        with router.client() as client:
+            live, sources = apply_live_overrides(base, config, client, now=at, models=None, targets=targets)
+        view = {phase.id: (phase.realtime_open, None if phase.offset_s is None else round(phase.offset_s, 6))
+                for phase in live.signals if phase.id in officials}
+        signal = next(s for s in sources if s.source == SourceKind.SIGNAL)
+        return view, (signal.state.value, signal.attempts, signal.fetched_count, signal.matched_count, signal.reason)
+
+    sg3 = next(phase for phase in base.signals if phase.id == "SG3")
+    tdata_reset()
+    try:
+        with _fake_keys(), _capture_logs() as logs:
+            # ① 처음: 1537 (ID 순으로 앞) 하나만 부른다. 녹색 남은 30.0초, 관측은 t0 − 0.7초 → τ = 녹색 − 30, θ = τ + 0.7
+            replies["1537"] = [ok("1537", int(now * 1000) - 700, "protected-Movement-Allowed", 300)]
+            view, status = run(now)
+            expected = round((sg3.green_s - 30.0 + 0.7) % sg3.cycle_s, 6)
+            p.eq("① SG3 개방(손 계산 오프셋), SG4 미개방", {"SG3": (True, expected), "SG4": (False, None)}, view)
+            p.eq("① 신호 원천 (상태, 시도, 받은 관측, 연결, 사유): nt 는 36001 이라 빠지고 nw 두 행", ("SUCCESS", 1, 2, 1, ""), status)
+            first = router.requests[-1][1]
+            p.eq("① 요청 1회, 파라미터 (itstId, type, numOfRows)", (1, ("1537", "json", "1000")),
+                 (router.count("tdata"), tuple(first.url.params.get(k) for k in ("itstId", "type", "numOfRows"))))
+            # ② 10초 뒤: 부르지 않고 받아 둔 기록을 쓴다. 오프셋은 10초 앞으로 간다
+            view, status = run(now + 10)
+            p.eq("② 10초 뒤 요청 없음, SG3 오프셋 +10초", (1, {"SG3": (True, round((expected + 10) % sg3.cycle_s, 6)), "SG4": (False, None)}),
+                 (router.count("tdata"), view))
+            p.eq("② 상태 성공, 시도 0", ("SUCCESS", 0, 2, 1, ""), status)
+            # ③ 300초 뒤: 1619 를 부른다. 500 이면 다시 부르지 않고(시도 1), 1537 기록으로 SG3 는 열린 채
+            view, status = run(now + 300)
+            p.eq("③ 1619 를 한 번만 부름(5xx 재시도 없음)", (2, "1619"), (router.count("tdata"), router.requests[-1][1].url.params.get("itstId")))
+            p.eq("③ SG3 열림, SG4 미개방, 상태 성공 시도 1", ((True, False), ("SUCCESS", 1, 2, 1, "")),
+                 ((view["SG3"][0], view["SG4"][0]), status))
+            # ④ 600초 뒤: 실패한 1619 가 아니라 오래 안 부른 1537 차례. 적색 남은 20.0초 → τ = 주기 − 20
+            replies["1537"] = [ok("1537", int((now + 600) * 1000) - 500, "stop-And-Remain", 200)]
+            view, status = run(now + 600)
+            red_offset = round((sg3.cycle_s - 20.0 + 0.5) % sg3.cycle_s, 6)
+            p.eq("④ 1537 을 다시 받아 적색 관측으로 오프셋", ("1537", {"SG3": (True, red_offset), "SG4": (False, None)}),
+                 (router.requests[-1][1].url.params.get("itstId"), view))
+            # ⑤ 1600초 뒤: 1619 차례에 또 500, 1537 기록은 1000초 묵어(900초 넘음) 버린다 → 실패, 둘 다 미개방
+            view, status = run(now + 1600)
+            p.eq("⑤ 묵은 기록은 쓰지 않음: 상태 실패(HTTP 500), 둘 다 미개방",
+                 (("FAILED", 1, 0, 0, "HTTP 500"), {"SG3": (False, None), "SG4": (False, None)}), (status, view))
+            # ⑥ 바로 뒤(간격 안): 부르지 않았고 쓸 기록도 없으면 건너뜀 "조회 간격 대기"
+            calls = router.count("tdata")
+            view, status = run(now + 1610)
+            p.eq("⑥ 간격 안, 기록 없음 → 건너뜀 (조회 간격 대기), 요청 없음", (("SKIPPED", 0, 0, 0, "조회 간격 대기"), calls),
+                 (status, router.count("tdata")))
+            # ⑦ 반복 호출 제한(429)도 실패로 담고 다시 부르지 않는다
+            replies["1537"] = [httpx.Response(429, json={"code": "V2X_REPEAT_CALL_LIMIT"})]
+            view, status = run(now + 1900)
+            p.eq("⑦ 429 는 한 번 부르고 실패", ("1537", ("FAILED", 1, 0, 0, "HTTP 429")),
+                 (router.requests[-1][1].url.params.get("itstId"), status))
+        secret = dict(_FAKE_KEYS)[ENV_TDATA_KEY]
+        p.true("⑧ 키는 요청 주소에만 있고 로그에는 없다",
+               secret in str(first.url) and all(secret not in line for line in logs.lines), f"로그 {len(logs.lines)}줄")
+        tdata_reset()
+        with _env({ENV_TDATA_KEY: None, ENV_SEOUL_KEY: "TESTKEY-SEOUL", ENV_DATA_GO_KR_KEY: "TESTKEY-DATA"}):
+            calls = router.count("tdata")
+            view, status = run(now)
+        p.eq("⑨ t-data 키가 없으면 건너뜀(키 없음), 요청 없음", (("SKIPPED", 0, 0, 0, "키 없음"), calls), (status, router.count("tdata")))
+    finally:
+        tdata_reset()
+    p.eq("⑩ 수집기는 t-data 신호를 모으지 않는다", "실시간 전용(t-data)", _signal_problem(targets))
+
+
 _RP6_CSV_HEADER = "대여일시,대여 대여소번호,반납일시,반납대여소번호,이용시간(분),이용거리(M)\n"
 _RP6_CSV_A = (
     "2026-11-09 08:05:00,102,2026-11-09 08:10:00,205,5,1200\n"
@@ -20996,6 +21182,7 @@ _CHECKS: tuple[_Check, ...] = (
     _Check("RP3", "재생 시각 옮기기", _rp3),
     _Check("RP4", "실패, 공백, 기록 없음", _rp4),
     _Check("RP5", "실시간 덮어쓰기", _rp5),
+    _Check("RT", "t-data 실시간 신호", _rt),
     _Check("RP6", "학습", _rp6),
     _Check("RP7", "기록 일괄 재생", _rp7),
     _Check("RP8", "일괄 재생 요약 계산", _rp8),

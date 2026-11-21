@@ -323,6 +323,7 @@ HALTON_PRIMES: tuple[int, ...] = (2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41
 ENV_SEOUL_KEY = "SEOUL_OPENAPI_KEY"
 ENV_DATA_GO_KR_KEY = "DATA_GO_KR_SERVICE_KEY"
 ENV_KAKAO_KEY = "KAKAO_REST_API_KEY"
+ENV_TDATA_KEY = "SEOUL_TDATA_API_KEY"  # 서울 t-data 신호 잔여시간(31단계)
 
 # 화면에서 조절하는 값의 (최솟값, 최댓값, 간격). §0.3 의 "화면에서 조절" 열, §6.3 의 사이드바와 같다.
 # EngineConfig 필드가 아닌 것: depart_offset_s (출발 늦추기, §4.6), prior_distance_km (이미 탄 거리, §6.3).
@@ -610,6 +611,7 @@ class EngineConfig(_Frozen):
     env_seoul_key: NonEmptyStr = ENV_SEOUL_KEY
     env_data_go_kr_key: NonEmptyStr = ENV_DATA_GO_KR_KEY
     env_kakao_key: NonEmptyStr = ENV_KAKAO_KEY
+    env_tdata_key: NonEmptyStr = ENV_TDATA_KEY
     data_dir: NonEmptyStr = "data"
     holidays: tuple[str, ...] = ()
     depart_offset_max_s: NonNegFloat = 1800.0
@@ -1713,6 +1715,30 @@ API_SPECS: MappingProxyType = MappingProxyType(
                 ),
             ),
             ApiSpec(
+                api="signal_tdata",
+                url="https://t-data.seoul.go.kr/apig/apiman-gateway/tapi/v2xSignalPhaseTimingFusionInformation/1.0",
+                key_place="QUERY",
+                key_param="apiKey",
+                key_env=ENV_TDATA_KEY,
+                params=("type", "pageNo", "numOfRows", "itstId"),
+                fixed_params={"type": "json", "pageNo": "1", "numOfRows": "1000"},
+                items_path=("items",),
+                fields={
+                    "signal_id": "itstId",
+                    "observed_at": "trsmUtcTime",
+                    "state": "{dir}PdsgStatNm",
+                    "remaining": "{dir}PdsgRmdrCs",
+                },
+                units={"remaining": "0.1초 (1초에 10 씩 준다, 2026-11-21 실측)", "observed_at": "유닉스 밀리초(UTC)"},
+                verified=True,
+                evidence=(
+                    "실제 응답 2026-11-22 01:05 KST (사용자의 t-data 키, 사용자 PC): 교차로 1537 에 HTTP 200, 맨 위가 JSON 배열"
+                    "(머리말·건수 없음), 239행, trsmUtcTime 오름차순, 가장 최신 행이 부른 시각보다 0.7초 앞, 행 간격 1초. "
+                    "방향 nt·et·st·wt·ne·se·sw·nw 마다 Pdsg(보행) 등 여섯 신호의 RmdrCs·StatNm. 같은 키로 300초 안에 다시 "
+                    "부르면 HTTP 429 V2X_REPEAT_CALL_LIMIT, 강남 교차로(2968, 3010)는 HTTP 500 (2026-11-21 00:30 KST)."
+                ),
+            ),
+            ApiSpec(
                 api="kakao_walk",
                 url="https://dapi.kakao.com/v2/routing/walk",
                 key_place="HEADER",
@@ -1798,6 +1824,8 @@ class BikeHistorySpec(_Frozen):
 class SignalApiSpec(_Frozen):
     enabled: bool = False
     verified: bool = False
+    source: Literal["DATA_GO_KR", "TDATA"] = "DATA_GO_KR"  # 전국 API(지역 한꺼번에) 또는 서울 t-data(교차로마다, 31단계)
+    min_call_interval_s: float = Field(default=0.0, ge=0)  # 같은 프로세스에서 신호 API 를 부르는 최소 간격(t-data 300초)
     field_map: dict[str, str] = {}  # 역할 → 필드 이름 (§5.2)
 
     @model_validator(mode="after")

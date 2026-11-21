@@ -355,6 +355,21 @@ def page_css(tokens: Mapping[str, str]) -> str:
 .mr-easy .mr-n {{ width: 24px; height: 24px; font-size: 12px; margin-top: 0; }}
 .mr-easy .mr-main {{ font-weight: 600; }}
 .mr-alts-h {{ font-weight: 700; margin: 8px 0 4px 0; }}
+.mr-cmp-cols, .mr-cmp-v {{ display: grid; grid-template-columns: minmax(4.5em, 1fr) minmax(4.5em, 1fr) minmax(5.5em, 1fr); gap: 0 8px; }}
+.mr-cmp-cols {{ font-size: 0.75rem; color: var(--mr-ink2); padding: 0 10px 2px 10px; }}
+.mr-cmp {{ border: 1px solid var(--mr-border); border-radius: 8px; padding: 8px 10px; margin: 6px 0 4px 0; }}
+.mr-cmp.rec {{ border: 2px solid var(--mr-safe); }}
+.mr-cmp .mr-cmp-t {{ font-weight: 600; line-height: 1.45; display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; }}
+.mr-cmp .mr-cmp-name {{ word-break: keep-all; }}
+.mr-cmp .mr-cmp-common {{ font-weight: 400; color: var(--mr-ink2); }}
+.mr-cmp .mr-badge, .mr-cmp .mr-tag {{ font-weight: 400; font-size: 0.75rem; }}
+.mr-cmp .mr-tag {{ border: 1px solid var(--mr-ink2); border-radius: 999px; padding: 0 6px; }}
+.mr-cmp .mr-tag.rec {{ border-color: var(--mr-safe); }}
+.mr-cmp .mr-cmp-v {{ font-size: 1.05rem; font-weight: 700; margin-top: 4px; }}
+.mr-cmp .mr-cmp-note {{ font-size: 0.85rem; line-height: 1.45; margin-top: 4px; word-break: keep-all; }}
+.mr-cmp .mr-cmp-note.lead {{ font-weight: 700; }}
+.mr-cmp-foot {{ font-size: 0.8rem; color: var(--mr-ink2); line-height: 1.45; margin-top: 6px; word-break: keep-all; }}
+.mr-aleave .mr-al {{ display: block; }}
 .mr-alt {{ border-top: 1px solid var(--mr-border); padding-top: 8px; }}
 .mr-alt .mr-alt-t {{ font-weight: 600; line-height: 1.45; display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; }}
 .mr-alt .mr-alt-t .mr-badge {{ font-weight: 400; font-size: 0.75rem; }}
@@ -651,6 +666,8 @@ RUN_NAMES: Mapping[SearchRun, str] = {
 }
 WAIT_RULE_NAMES: Mapping[WaitRule, str] = {WaitRule.EXPECTED: "평균 대기", WaitRule.WORST: "가장 긴 대기", WaitRule.NONE: "신호 무시"}
 GRADE_NAMES: Mapping[Grade, str] = {Grade.SAFE: "안전", Grade.RISKY: "주의", Grade.GHOST: "유령"}
+# 간단히 보기의 등급 말(32단계): 갈아탈 차를 탈 수 있는지를 소비자 말로
+EASY_GRADE_NAMES: Mapping[Grade, str] = {Grade.SAFE: "여유 있음", Grade.RISKY: "빠듯함", Grade.GHOST: "놓치기 쉬움"}
 STATUS_NAMES: Mapping[RouteStatus, str] = {RouteStatus.RANKED: "순위", RouteStatus.GHOST_PRUNED: "걸러짐"}
 REASON_NAMES: Mapping[ReasonCode, str] = {
     ReasonCode.LAST_VEHICLE_RISK: "막차 위험", ReasonCode.LOW_PLAN_PROBABILITY: "확률 낮음", ReasonCode.UNREACHABLE: "도착 불가",
@@ -849,9 +866,10 @@ def badge_html(text: str, css: str, symbol: str) -> str:
     return f'<span class="mr-badge {css}"><span class="mr-sym">{esc(symbol)}</span>{esc(text)}</span>'
 
 
-def grade_badge(grade: Grade) -> str:
+def grade_badge(grade: Grade, *, easy: bool = False) -> str:
+    """등급 배지. `easy` 면 간단히 보기의 말(32단계 `EASY_GRADE_NAMES`)."""
     css, symbol = _GRADE_CLASS[Grade(grade)]
-    return badge_html(GRADE_NAMES[Grade(grade)], css, symbol)
+    return badge_html((EASY_GRADE_NAMES if easy else GRADE_NAMES)[Grade(grade)], css, symbol)
 
 
 def source_badge(state: SourceState) -> str:
@@ -1671,19 +1689,30 @@ def easy_answer_html(output: EngineOutput, scenario: Scenario | None, shown_id: 
         return f'<div class="mr-state ghost">{esc(NO_PLAN_EASY_TEXT)}</div>'
     css = _GRADE_CLASS[answer.grade][0]
     nxt = easy_next(_items(output)[_shown_id(output, shown_id)], output, scenario)
-    rows = (f'<div class="mr-arow mr-anext">{_nowrap_parens(esc(nxt))}</div>' if nxt else "")
-    if leave:
-        rows += f'<div class="mr-arow mr-aleave">{esc(leave)}</div>'
     shown_rows = answer.rows
     if leave and output.query.deadline_s is not None:  # 28단계: 마감 여유 줄이 이미 늦는지 말한다
         target = f"{deadline_clock(output.clock_s, output.query.deadline_s)}까지 "
         shown_rows = tuple(row for row in shown_rows if not row.startswith(target))
-    rows += "".join(f'<div class="mr-arow">{esc(row)}</div>' for row in shown_rows)
-    return (f'<div class="mr-answer {css}"><div class="mr-ahead"><span>{esc(answer.head)}</span>{grade_badge(answer.grade)}</div>'
+    # 32단계: 시각을 쓰임새로 묶는다. 경로를 고르는 줄(분·도착·늦어도·요금), 지금 할 일, 출발을 늦추면(두 줄, 안내 시작 바로 위)
+    rows = "".join(f'<div class="mr-arow">{esc(row)}</div>' for row in shown_rows)
+    rows += f'<div class="mr-arow mr-afacts">{esc(answer.facts)}</div>'
+    if nxt:
+        rows += f'<div class="mr-arow mr-anext">{_nowrap_parens(esc(nxt))}</div>'
+    if leave:  # 출발을 늦추면 어떻게 되나: 두 시각 비교, 안내 시작 단추 바로 위
+        rows += f'<div class="mr-arow mr-aleave">{_leave_lines(leave)}</div>'
+    return (f'<div class="mr-answer {css}"><div class="mr-ahead"><span>{esc(answer.head)}</span>'
+            f'{grade_badge(answer.grade, easy=True)}</div>'
             f'<div class="mr-atitle">{esc(answer.title)}</div>'
             f'<div class="mr-abig"><span class="mr-amin mr-num">{esc(answer.minutes)}</span>'
-            f'<span class="mr-aspan mr-num">{esc(answer.span)}</span></div>'
-            f'{rows}<div class="mr-arow mr-afacts">{esc(answer.facts)}</div></div>')
+            f'<span class="mr-aspan mr-num">{esc(answer.span)}</span></div>{rows}</div>')
+
+
+def _leave_lines(leave: str) -> str:
+    """출발 여유 문장(32단계)을 두 시각 비교로 위아래에 맞춘다: 첫 ", " 에서 나눠 줄마다 한 덩이. 글(textContent)은 그대로다."""
+    head, sep, tail = leave.partition(", ")
+    if not sep:
+        return esc(leave)
+    return f'<span class="mr-al">{esc(head + sep)}</span><span class="mr-al">{esc(tail)}</span>'
 
 
 def _ghost_boarding(it: ItineraryResult):
@@ -1966,6 +1995,117 @@ def easy_alternatives(output: EngineOutput, scenario: Scenario | None, shown_id:
 
 
 ALTS_HEAD_HTML = '<div class="mr-alts-h">다른 경로</div>'
+
+COMPARE_HEAD = "경로 비교"
+COMPARE_COLS = ("걸리는 시간", "도착", "요금")
+COMPARE_HEAD_HTML = (f'<div class="mr-alts-h">{COMPARE_HEAD}</div><div class="mr-cmp-cols" aria-hidden="true">'
+                     + "".join(f"<span>{name}</span>" for name in COMPARE_COLS) + "</div>")
+
+
+@dataclasses.dataclass(frozen=True)
+class CompareRow:
+    """경로 비교 표의 한 줄(§6.9, 32단계). 세 값(분, 도착, 요금)은 모든 줄에서 같은 칸·같은 글자 크기다."""
+    itinerary_id: str
+    common: str  # 모든 줄이 같은 앞부분("지하철 2호선 → 지하철 9호선 → "), 없으면 ""
+    tail: str  # 줄마다 다른 뒷부분
+    grade: Grade
+    minutes: str
+    arrive: str
+    fare: str
+    recommended: bool  # 이 앱의 추천(최선)
+    shown: bool  # 지금 위에서 보는 경로
+    naive: bool  # 기존 길찾기 방식의 1위
+    pickable: bool  # "이 경로 보기" 단추를 두나(걸러진 경로는 안내할 수 없어 두지 않는다)
+    notes: tuple[str, ...] = ()
+
+
+def _compare_ids(output: EngineOutput) -> list[str]:
+    """표의 여정: 최선, 기존 방식 1위(최선과 다르면 바로 아래에: 추천 줄과 도착을 맞대어 보게), 순위의 다른 대표(최대 `SIMPLE_ALT_MAX` 개)."""
+    best_id = output.comparison.best_id
+    naive_id = output.comparison.naive_best_id
+    head = [best_id] if best_id else []
+    if naive_id and naive_id in _items(output) and naive_id not in head:
+        head.append(naive_id)
+    return head + [rep for rep in output.ranking if rep not in head][:SIMPLE_ALT_MAX]
+
+
+def naive_notes(output: EngineOutput, scenario: Scenario | None) -> tuple[str, ...]:
+    """기존 방식 1위 줄에 붙이는 설명(32단계): 기존 앱이 안내하는 도착과 이 앱이 계산한 도착, 놓치기 쉬운 차."""
+    cmp = output.comparison
+    naive = _items(output).get(cmp.naive_best_id) if cmp.naive_best_id else None
+    if naive is None:
+        return ()
+    c0 = output.clock_s
+    lines = []
+    promised = cmp.naive_promised_s
+    if cmp.same:
+        lines.append("기존 길찾기 앱도 이 경로를 1위로 안내합니다.")
+    if promised is None:
+        lines.append("기존 길찾기 앱은 탈 차가 없어 도착 시각을 안내하지 못합니다.")
+    elif cmp.naive_mean_s is not None and not cmp.same:
+        lines.append(f"기존 길찾기 앱 안내 {fmt_hm(c0, promised)} 도착 → 이 앱 계산 {fmt_hm(c0, cmp.naive_mean_s)} 도착")
+    else:
+        lines.append(f"기존 길찾기 앱 안내 {fmt_hm(c0, promised)} 도착")
+    ghost = _ghost_boarding(naive)
+    if ghost is not None:
+        ride, boarding = ghost
+        option = _vehicle(boarding, boarding.naive_trip_id)
+        which = easy_vehicle(ride, option, scenario, c0, ("은", "는")) if option is not None else f"{ride_name(ride)} 차는"
+        lines.append(f"기존 앱이 타라는 {which} 놓치기 쉽습니다.")
+        if cmp.same:
+            guided = _vehicle(boarding, boarding.guided_trip_id)
+            if guided is not None:
+                lines.append(f"이 앱은 {easy_vehicle(ride, guided, scenario, c0, ('을', '를'))} 안내합니다.")
+    elif cmp.naive_status == RouteStatus.GHOST_PRUNED:
+        lines.append("차를 놓치면 걸어서 갈 길이 없습니다." if ReasonCode.UNREACHABLE in cmp.naive_reasons
+                     else "그대로는 계획대로 가기 어렵습니다.")
+    return tuple(lines)
+
+
+def compare_rows(output: EngineOutput, scenario: Scenario | None, shown_id: str | None = None) -> tuple[CompareRow, ...]:
+    """경로 비교 표(§6.9, 32단계): 최선이 맨 위, 기존 방식 1위는 그 줄에 설명을 붙인다. 최선이 없으면 빈 튜플."""
+    items = _items(output)
+    if output.comparison.best_id not in items:
+        return ()
+    ids = _compare_ids(output)
+    shown = _shown_id(output, shown_id)
+    titles = [easy_title(items[rid], ids, output, scenario) for rid in ids]
+    parts = [title.split(" → ") for title in titles]
+    common_n = 0
+    if len(parts) >= 2:
+        while all(len(part) > common_n + 1 and part[common_n] == parts[0][common_n] for part in parts):
+            common_n += 1
+    c0 = output.clock_s
+    naive_id = output.comparison.naive_best_id
+    notes = naive_notes(output, scenario)
+    rows = []
+    for rid, part in zip(ids, parts):
+        it = items[rid]
+        mean = it.arrival.mean_s
+        common = " → ".join(part[:common_n]) + " → " if common_n else ""
+        rows.append(CompareRow(
+            rid, common, " → ".join(part[common_n:]), it.grade,
+            "-" if mean is None else fmt_minutes(trip_minutes(c0, mean)), "-" if mean is None else fmt_hm(c0, mean),
+            fare_text(it), rid == output.comparison.best_id, rid == shown, rid == naive_id,
+            it.status == RouteStatus.RANKED, notes if rid == naive_id else ()))
+    return tuple(rows)
+
+
+def compare_row_html(row: CompareRow) -> str:
+    tags = []
+    if row.recommended:
+        tags.append('<span class="mr-tag rec">앱 추천</span>')
+    if row.naive:
+        tags.append('<span class="mr-tag">기존 앱 1위</span>')
+    if row.shown:
+        tags.append('<span class="mr-tag">보는 중</span>')
+    name = (f'<span class="mr-cmp-common">{esc(row.common)}</span>' if row.common else "") + f'<span>{esc(row.tail)}</span>'
+    notes = "".join(f'<div class="mr-cmp-note{" lead" if n == 0 and row.naive else ""}">{esc(line)}</div>' for n, line in enumerate(row.notes))
+    css = " ".join(c for c in ("mr-cmp", "rec" if row.recommended else "", "naive" if row.naive else "") if c)
+    return (f'<div class="{css}"><div class="mr-cmp-t"><span class="mr-cmp-name">{name}</span>'
+            f'{grade_badge(row.grade, easy=True)}{"".join(tags)}</div>'
+            f'<div class="mr-cmp-v mr-num"><span>{esc(row.minutes)}</span><span>{esc(row.arrive)}</span>'
+            f'<span>{esc(row.fare)}</span></div>{notes}</div>')
 
 
 def easy_alternative_html(row: EasyAlternative) -> str:
@@ -2415,7 +2555,7 @@ def files_key(paths: Iterable[Path]) -> str:
 def key_presence() -> dict[str, bool]:
     """키 환경변수가 있는지(값은 읽어 두지 않는다, §5.5). 이름은 `EngineConfig` 의 환경변수 이름 필드에서 읽는다."""
     config = EngineConfig()
-    names = (config.env_seoul_key, config.env_data_go_kr_key, config.env_kakao_key)
+    names = (config.env_seoul_key, config.env_data_go_kr_key, config.env_kakao_key, config.env_tdata_key)
     return {name: bool((os.environ.get(name) or "").strip()) for name in names}
 
 
@@ -3550,7 +3690,7 @@ def sidebar_sources(ctx: DataContext, scenario: Scenario) -> None:
         keys = " · ".join(
             f"{name} {present[0] if ctx.keys.get(env) else present[1]}"
             for name, env in (("열린데이터광장", config.env_seoul_key), ("공공데이터포털", config.env_data_go_kr_key),
-                              ("카카오", config.env_kakao_key))
+                              ("카카오", config.env_kakao_key), ("서울 신호", config.env_tdata_key))
         )
         st.caption(f"키: {keys}")
         st.caption(store_line(ctx.summary, ctx.store_path, time.time()))
@@ -3594,13 +3734,30 @@ def init_query_state(defaults: Mapping[str, Any]) -> None:
             state[key] = defaults[key]
 
 
+def scenario_story(scenario: Scenario, state: Mapping[str, Any], *, simple: bool) -> str:
+    """사이드바의 시나리오 설명(32단계). 시나리오 설명은 기본 질의(지금 탄 열차 등)의 이야기라, 간단히 보기에서는 지금 출발·목적지가
+    예시 경로와 같으면 그 예시의 설명을, 아니면 아무것도 보이지 않는다(본문 경로와 맞지 않는 설명을 보이지 않게). 자세히 보기는 그대로."""
+    if not simple:
+        return scenario.description
+    if state.get("origin_kind") != "PLACE" or state.get("dest_kind") != "PLACE":
+        return ""
+    name_of = {place.node_id: place.name for place in scenario.places}
+    for example in scenario.examples:
+        if (name_of.get(example.origin_node_id), name_of.get(example.destination_node_id)) == (
+                state.get("origin_place"), state.get("dest_place")):
+            return f"{example.name}. {example.note}"
+    return ""
+
+
 def render_sidebar(ctx: DataContext, trip: Any = None) -> Prepared:
     """사이드바를 위에서 아래로 그리며 이번 실행의 시나리오, 모드, 질의, 설정을 정한다(§6.3, §8.4 의 1 ~ 6)."""
     state = st.session_state
     with st.sidebar:
         scenario_id, scenario_json = sidebar_scenario(ctx)
         scenario = scenario_object(scenario_json)
-        st.caption(scenario.description)
+        story = scenario_story(scenario, state, simple=trip is not None)
+        if story:
+            st.caption(story)
         note_slot = st.empty()
         selected, mode, fallback = sidebar_mode(ctx)
         if mode == DataMode.SIMULATION.value:
@@ -3729,6 +3886,7 @@ def map_pick_of(state: Mapping[str, Any], scenario: Scenario):
 
 FOOTER_TEXT = "데이터: 서울 열린데이터광장, 공공데이터포털, © OpenStreetMap 기여자(ODbL)"
 MAP_NOTE = "지도 타일 © OpenStreetMap 기여자 · 지도 표시는 인터넷 연결이 필요합니다"
+MAP_SIMPLE_NOTE = "지도의 번호는 아래 단계의 번호입니다(노선 번호가 아닙니다). "  # 32단계: 4호선으로 읽히지 않게
 KAKAO_NOTE = " · 경로 비교: 카카오"
 KPI_DELTA_NOTE = "기존 1위 대비"  # KPI 변화량 설명(§6.3). 1440 px 화면의 타일 폭에서 잘리지 않는 길이
 
@@ -6162,7 +6320,7 @@ def render_data_tab(p: Prepared, output: EngineOutput, tokens: Mapping[str, str]
     st.markdown("**키**")
     chips = "".join(chip_html(f"{name} 키 {'감지됨' if ctx.keys.get(env) else '없음'}")
                     for name, env in (("열린데이터광장", config.env_seoul_key), ("공공데이터포털", config.env_data_go_kr_key),
-                                      ("카카오", config.env_kakao_key)))
+                                      ("카카오", config.env_kakao_key), ("서울 신호", config.env_tdata_key)))
     st.html(f'<div class="mr-chiprow">{chips}</div>')
     st.caption(KEYS_NOTE)
 
@@ -6216,7 +6374,7 @@ def render_map(p: Prepared, output: EngineOutput | None, selected_id: str | None
                        returned_objects=returned)
     if not simple:
         st.html(legend_html(tokens, kakao=bool(kakao)))
-    st.caption(MAP_NOTE + (KAKAO_NOTE if kakao else ""))
+    st.caption((MAP_SIMPLE_NOTE if simple else "") + MAP_NOTE + (KAKAO_NOTE if kakao else ""))
     if p.pick is None or not isinstance(result, Mapping):
         return False
     return apply_map_click(state, result.get("last_clicked"))
@@ -6239,16 +6397,29 @@ def _on_pick(itinerary_id: str) -> None:
     store_value(st.session_state, "selected_id", itinerary_id)
 
 
-def render_simple_alternatives(output: EngineOutput, scenario: Scenario, shown_id: str | None) -> None:
-    rows = easy_alternatives(output, scenario, shown_id)
-    if not rows:
+def compare_htmls(output: EngineOutput, scenario: Scenario | None, shown_id: str | None = None) -> list[str]:
+    """경로 비교 표가 그리는 HTML 차례(머리, 줄들, 기존 방식 가정 문장). 그리지 않으면 빈 목록. 검사가 화면과 맞춰 본다."""
+    rows = compare_rows(output, scenario, shown_id)
+    if len(rows) < 2 and not any(row.notes for row in rows):
+        return []
+    foot = [f'<div class="mr-cmp-foot">{esc(NAIVE_EASY_NOTE)}</div>'] if any(row.naive for row in rows) else []
+    return [COMPARE_HEAD_HTML, *(compare_row_html(row) for row in rows), *foot]
+
+
+def render_simple_alternatives(output: EngineOutput, scenario: Scenario, shown_id: str | None, *, picks: bool = True) -> None:
+    """경로 비교 표(§6.9, 32단계). 지금 보는 줄과 걸러진 줄에는 단추가 없다. 안내 중에는 단추를 두지 않는다(`picks`)."""
+    rows = compare_rows(output, scenario, shown_id)
+    if len(rows) < 2 and not any(row.notes for row in rows):
         return
     with st.container(key="mr_alts"):
-        st.html(ALTS_HEAD_HTML)
+        st.html(COMPARE_HEAD_HTML)
         for n, row in enumerate(rows, start=1):
-            st.html(easy_alternative_html(row))
-            st.button(BACK_TO_BEST_LABEL if row.recommended else ALT_PICK_LABEL, key=f"alt_pick_{n}", type="secondary",
-                      on_click=_on_pick, args=(row.itinerary_id,))
+            st.html(compare_row_html(row))
+            if picks and not row.shown and row.pickable:
+                st.button(BACK_TO_BEST_LABEL if row.recommended else ALT_PICK_LABEL, key=f"alt_pick_{n}", type="secondary",
+                          on_click=_on_pick, args=(row.itinerary_id,))
+        if any(row.naive for row in rows):
+            st.html(f'<div class="mr-cmp-foot">{esc(NAIVE_EASY_NOTE)}</div>')
 
 
 def fast_run(p: Prepared) -> EngineOutput | None:
@@ -6350,12 +6521,8 @@ def render_simple(p: Prepared, output: EngineOutput | None, moved: Query | None,
             walk_control()
     with slots["side"]:
         clicked = render_map(p, output, shown_id, tokens, simple=True)
-        if ok:
-            caution = caution_html(output, p.display)  # 주의 카드는 지도 아래(19단계): 할 일 다음에 읽는 이유이고, PC 에서는 첫 화면 안
-            if caution:
-                st.html(caution)
-            if status is None:  # 안내 중에는 바꾸기를 안내 카드가 한다(§6.10)
-                render_simple_alternatives(output, p.display, shown_id)
+        if ok:  # 경로 비교 표는 지도 아래(32단계): 기존 앱 1위의 설명은 그 줄에 붙는다. 안내 중에는 바꾸기를 안내 카드가 한다(§6.10)
+            render_simple_alternatives(output, p.display, shown_id, picks=status is None)
     st.button(DETAIL_BUTTON_LABEL, key="view_detail", on_click=_on_view_detail, width="stretch")
     if output is not None and output.warnings:
         st.caption(WARNINGS_EASY_TEXT.format(n=len(output.warnings)))
@@ -7204,6 +7371,10 @@ class _Screen:
 
     def html_text(self, css: str) -> str:
         return " ".join(_plain(value) for value in self.htmls(css))
+
+    def compare(self) -> list[str]:
+        """경로 비교 표의 HTML (32단계): 머리, 줄, 가정 문장."""
+        return [item.value for item in self.at.html if 'class="mr-alts-h' in item.value or 'class="mr-cmp' in item.value]
 
     def chips(self) -> str:
         return self.html_text("mr-chips")
@@ -8274,7 +8445,7 @@ def _ui21(c: _Checker, folder: Path, maps: _MapCalls) -> None:
     c.true("⑤ 읽지 못한 파일 안내", "읽지 못한 시나리오 파일 2개: bad.json, dupA.json" in s.side_captions(), s.side_captions())
     c.eq("⑤ 두 파일은 목록에 없다", [hand["A"].title, hand["B"].title, _GOLDEN_LABEL], s.options("selectbox", "scenario_id"))
     captions = s.side_captions()
-    c.true("③ 키 줄", any("열린데이터광장 없음 · 공공데이터포털 없음 · 카카오 없음" in text for text in captions), captions)
+    c.true("③ 키 줄", any("열린데이터광장 없음 · 공공데이터포털 없음 · 카카오 없음 · 서울 신호 없음" in text for text in captions), captions)
     c.true("③ 기록 저장소 줄", "기록 저장소 없음" in captions, captions)
     c.true("③ 모델 줄", any("신호 없음 · 따릉이 없음" in text for text in captions), captions)
     s.set("segmented_control", "data_mode", "REPLAY")
@@ -9106,7 +9277,7 @@ def _ui20(c: _Checker, folder: Path, maps: _MapCalls) -> None:
            and any("없음(직선거리로 둠)" in caption for caption in captions), captions)
     c.true("④ 빈 폴더: 모델 안내", "학습 모델이 없습니다. 신호 기록이 쌓이면 `python core_engine.py --fit`, 따릉이 대여 이력을 받으면 "
            "`--fit-bike` 를 실행하세요." in infos, infos)
-    c.true("⑤ 빈 폴더: 키", all(piece in text for piece in ("열린데이터광장 키 없음", "공공데이터포털 키 없음", "카카오 키 없음",
+    c.true("⑤ 빈 폴더: 키", all(piece in text for piece in ("열린데이터광장 키 없음", "공공데이터포털 키 없음", "카카오 키 없음", "서울 신호 키 없음",
                                                        "키는 환경변수로만 넣습니다.")), text)
     # 학습한 따릉이 속도 (가짜 load_models)
     with tempfile.TemporaryDirectory(prefix="mobility-router-rp6-") as temp:
@@ -9746,7 +9917,14 @@ def _ui31(c: _Checker, folder: Path, maps: _MapCalls) -> None:
          (s.state("scenario_id"), s.state("origin_kind"), s.state("origin_place"), s.state("dest_kind"), s.state("dest_place")))
     c.eq("⓪ 첫 화면 답 카드 = E1 엔진 결과", [easy_answer_html(out1, a, None, _leave_expect(a, at_node(e1), config))],
          s.htmls("mr-answer"))
-    c.true("⓪ 첫 화면 주의 카드: 기존 길찾기 방식의 1위를 보여 줌", len(s.htmls("mr-caution")) == 1, s.htmls("mr-caution"))
+    c.eq("⓪ 첫 화면 경로 비교 표 = E1 엔진 결과 (32단계)", compare_htmls(out1, a), s.compare())
+    c.eq("⓪ 표의 줄: 공통 앞부분, 뒷부분, 분, 도착, 요금, 추천, 기존 앱 1위, 설명",
+         [("지하철 2호선 → ", "지하철 9호선 → 따릉이", "24분", "19:44", "2,550원", True, False, ()),
+          ("지하철 2호선 → ", "지하철 9호선 → 143·146·345번", "27분", "19:47", "1,550원", False, True,
+           ("기존 길찾기 앱 안내 19:40 도착 → 이 앱 계산 19:47 도착",)),
+          ("지하철 2호선 → ", "지하철 9호선", "26분", "19:46", "1,550원", False, False, ())],
+         [(r.common, r.tail, r.minutes, r.arrive, r.fare, r.recommended, r.naive, r.notes) for r in compare_rows(out1, a)])
+    c.eq("⓪ 주의 카드는 없다(표의 줄로 옮김)", [], s.htmls("mr-caution"))
     first = _Screen(c, maps).run("자세히 보기 첫 실행 (UI-31 ⓪)")
     c.eq("⓪ 자세히 보기로 시작하면 시나리오 기본 질의 그대로", (query_defaults(a)["origin_kind"], query_defaults(a)["dest_place"]),
          (first.state("origin_kind"), first.state("dest_place")))
@@ -9763,7 +9941,10 @@ def _ui31(c: _Checker, folder: Path, maps: _MapCalls) -> None:
     c.eq("② E2: 출발·목적지 장소", (name_of[e2.origin_node_id], name_of[e2.destination_node_id]),
          (s.state("origin_place"), s.state("dest_place")))
     c.eq("② E2: 장소 이름", ("청담역·경기고교 정류장", "종합운동장역 북쪽 출구"), (s.state("origin_place"), s.state("dest_place")))
-    c.eq("② E2: 주의 카드", [caution_html(out2, a)], s.htmls("mr-caution"))
+    c.eq("② E2: 경로 비교 표", compare_htmls(out2, a), s.compare())
+    c.eq("② E2: 기존 앱 1위 줄의 설명", ("기존 길찾기 앱 안내 19:44 도착 → 이 앱 계산 19:47 도착",
+                                   "기존 앱이 타라는 2호선 외선 종합운동장행 열차(19:39 출발)는 놓치기 쉽습니다."),
+         next((r.notes for r in compare_rows(out2, a) if r.naive), None))
     _no_banned(c, "②", s)
     # ③ 자세히 보기, 사이드바
     s = _Screen(c, maps).run("자세히 보기 첫 실행 (UI-31)")
@@ -9873,9 +10054,9 @@ def _ui34(c: _Checker, folder: Path, maps: _MapCalls) -> None:
            and s.htmls("mr-answer")[0].count('class="mr-arow mr-aleave"') == 1, answer)
     steps = " ".join(s.htmls("mr-easy"))
     c.true("③ B: 쉬운 단계의 놓치면 묶음", 'class="mr-backup"' in steps and "놓치면 470번" in _plain(steps), _plain(steps))
-    order = [i for i, item in enumerate(s.at.html) if 'class="mr-easy' in item.value or 'class="mr-caution' in item.value]
-    kinds = ["easy" if 'class="mr-easy' in s.at.html[i].value else "caution" for i in order]
-    c.eq("③ B: 쉬운 단계가 주의 카드보다 앞", ["easy", "caution"], kinds)
+    order = [i for i, item in enumerate(s.at.html) if 'class="mr-easy' in item.value or 'class="mr-alts-h' in item.value]
+    kinds = ["easy" if 'class="mr-easy' in s.at.html[i].value else "compare" for i in order]
+    c.eq("③ B: 쉬운 단계가 경로 비교 표보다 앞", ["easy", "compare"], kinds)
     # ④ 마감
     s.set("toggle", "use_deadline", True)
     s.set("time_input", "deadline_time", datetime.time(23, 40, 0))
@@ -9889,7 +10070,7 @@ def _ui34(c: _Checker, folder: Path, maps: _MapCalls) -> None:
     # ⑤ 출발 여유가 없는 때
     s = _Screen(c, maps, view=None, scenario="A").run("간단히 보기, 시나리오 기본 질의 (UI-34 ⑤)")
     c.eq("⑤ A 기본(차량 안 출발): 출발 여유 없음", 0, s.htmls("mr-answer")[0].count("mr-aleave") if s.htmls("mr-answer") else None)
-    s.scenario("B").click("alt_pick_1")
+    s.scenario("B").click("alt_pick_3")  # 32단계: 1번 줄은 지금 보는 추천, 2번 줄은 걸러진 기존 앱 1위라 단추가 없다
     picked = s.htmls("mr-answer")
     c.eq("⑤ B 고른 경로: 출발 여유 없음 (mr-aleave 수, 머리)", (0, True),
          (picked[0].count("mr-aleave") if picked else None, bool(picked) and "<span>고른 경로</span>" in picked[0]))
@@ -10417,26 +10598,35 @@ def _ui32(c: _Checker, folder: Path, maps: _MapCalls) -> None:
     c.true("② B: 지금 할 일과 같은 이름 구분",
            "지금 할 일: 지하철2호선강남역 정류장까지 걷기, 이어서 140·470번 타기 (23:25 출발)" in s.html_text("mr-answer")
            and "140·470번 · 지하철2호선강남역 승차" in s.html_text("mr-answer"), s.html_text("mr-answer"))
-    rows_b = easy_alternatives(exp_b, b)
-    c.eq("② B: 다른 경로", [ALTS_HEAD_HTML, *(easy_alternative_html(row) for row in rows_b)], s.htmls("mr-alt"))
-    c.eq("② B: 다른 경로 제목", ["따릉이", "지하철 2호선 → 지하철 3호선", "140·470번 · 신분당선강남역 승차"], [row.title for row in rows_b])
-    c.eq("② B: 줄 단추", [(f"alt_pick_{n}", ALT_PICK_LABEL) for n in (1, 2, 3)],
+    rows_b = compare_rows(exp_b, b)
+    c.eq("② B: 경로 비교 표", compare_htmls(exp_b, b), s.compare())
+    c.eq("② B: 표의 줄 (이름, 분, 도착, 요금, 추천, 기존 앱 1위, 단추)",
+         [("140·470번 · 지하철2호선강남역 승차", "13분", "23:33", "1,500원", True, False, True),
+          ("360번 → 140번", "34분", "23:54", "0원 (막차 놓쳐 걷기)", False, True, False),
+          ("따릉이", "14분", "23:34", "1,000원", False, False, True),
+          ("지하철 2호선 → 지하철 3호선", "19분", "23:39", "1,550원", False, False, True),
+          ("140·470번 · 신분당선강남역 승차", "21분", "23:41", "1,500원", False, False, True)],
+         [(r.common + r.tail, r.minutes, r.arrive, r.fare, r.recommended, r.naive, r.pickable) for r in rows_b])
+    c.eq("② B: 기존 앱 1위(걸러짐) 줄의 설명", ("기존 길찾기 앱 안내 23:30 도착 → 이 앱 계산 23:54 도착",
+                                         "기존 앱이 타라는 360번 막차(23:22 출발)는 놓치기 쉽습니다."), rows_b[1].notes)
+    c.eq("② B: 줄 단추 (보는 줄과 걸러진 줄에는 없음)", [(f"alt_pick_{n}", ALT_PICK_LABEL) for n in (3, 4, 5)],
          [(item.key, item.label) for item in s.at.main.button if str(item.key).startswith("alt_pick_")])
     c.eq("② B: 돌아가기 단추 없음", False, s.has("button", "pick_best"))
     side_more = [item for item in s.at.sidebar.expander if item.label == SIDE_MORE_LABEL]
     inside = {str(getattr(item, "key", "")) for item in side_more[0].selectbox} | {str(item.key) for item in side_more[0].button} if side_more else set()
     c.eq("② 사이드바 접힘과 그 안의 순위 기준·되돌리기", (1, True, True), (len(side_more), "rank_criterion" in inside, "reset_button" in inside))
     # ③ 따릉이를 고른다
-    bike = rows_b[0].itinerary_id
-    s.click("alt_pick_1")
+    bike = rows_b[2].itinerary_id
+    s.click("alt_pick_3")
     c.eq("③ 고른 여정", bike, s.state("selected_id"))
     c.eq("③ 답 카드", [easy_answer_html(exp_b, b, bike)], s.htmls("mr-answer"))
     picked = easy_answer(exp_b, b, bike)
     c.eq("③ 머리와 비교 줄", ("고른 경로", "추천 경로보다 평균 약 1분 늦게 도착합니다."), (picked.head, picked.rows[-1]) if picked else None)
-    c.eq("③ 주의 카드는 그대로", [caution_html(exp_b, b)], s.htmls("mr-caution"))
+    c.eq("③ 경로 비교 표 (따릉이 줄이 보는 중)", compare_htmls(exp_b, b, bike), s.compare())
     c.eq("③ 쉬운 단계", [easy_steps_html(_items(exp_b)[bike], exp_b, b)], s.htmls("mr-easy"))
-    rows_pick = easy_alternatives(exp_b, b, bike)
-    c.eq("③ 다른 경로 첫 줄은 앱 추천", (best_b, True), (rows_pick[0].itinerary_id, rows_pick[0].recommended))
+    rows_pick = compare_rows(exp_b, b, bike)
+    c.eq("③ 표 첫 줄은 앱 추천, 셋째 줄(따릉이)이 보는 중", (best_b, True, True), (rows_pick[0].itinerary_id, rows_pick[0].recommended,
+                                                                      rows_pick[2].shown))
     c.eq("③ 줄 단추 글자", [BACK_TO_BEST_LABEL, ALT_PICK_LABEL, ALT_PICK_LABEL],
          [item.label for item in s.at.main.button if str(item.key).startswith("alt_pick_")])
     c.eq("③ 답 카드 아래 돌아가기 단추", BACK_TO_BEST_LABEL, s.at.button(key="pick_best").label if s.has("button", "pick_best") else None)
@@ -10456,18 +10646,20 @@ def _ui32(c: _Checker, folder: Path, maps: _MapCalls) -> None:
     exp_60 = ce.run_engine(shifted, b.default_query, config)
     s = _Screen(c, maps, view=None).run("간단히 보기 첫 실행 (⑥)").scenario("B")
     s.set("select_slider", "depart_offset_s", 60)
-    rows_60 = easy_alternatives(exp_60, shifted)
-    c.eq("⑥ 다른 경로", [ALTS_HEAD_HTML, *(easy_alternative_html(row) for row in rows_60)], s.htmls("mr-alt"))
-    c.eq("⑥ 제목과 덧말", [("140·470번 · 지하철2호선강남역 승차", "기존 길찾기 방식이 타라는 차는 놓치기 쉬워, 이 앱은 탈 수 있는 차로 다시 계산했습니다."),
-                        ("140·470번 · 신분당선강남역 승차", ""), ("지하철 2호선 → 지하철 3호선", "")],
-         [(row.title, row.note) for row in rows_60])
+    rows_60 = compare_rows(exp_60, shifted)
+    c.eq("⑥ 경로 비교 표", compare_htmls(exp_60, shifted), s.compare())
+    c.eq("⑥ 이름과 설명", [("따릉이", ()), ("140·470번 · 지하철2호선강남역 승차", ("기존 길찾기 앱 안내 23:32 도착 → 이 앱 계산 23:41 도착",
+                                                                   "기존 앱이 타라는 140번(23:25 출발)은 놓치기 쉽습니다.")),
+                        ("140·470번 · 신분당선강남역 승차", ()), ("지하철 2호선 → 지하철 3호선", ()), ("도보", ())],
+         [(row.common + row.tail, row.notes) for row in rows_60])
     # ⑦ A 기본: 지금 할 일과 기존 1위 덧말
     exp_a = ce.run_engine(a, a.default_query, config)
     s = _Screen(c, maps, view=None, scenario="A").run("간단히 보기, 시나리오 기본 질의 (⑦)")
     c.eq("⑦ A 답 카드", [easy_answer_html(exp_a, a)], s.htmls("mr-answer"))
     c.true("⑦ A 지금 할 일", "지금 할 일: 삼성역 2호선 승강장에서 내리기 (19:21 도착)" in s.html_text("mr-answer"), s.html_text("mr-answer"))
-    c.eq("⑦ A 첫 줄 덧말", "기존 길찾기 방식이 타라는 차는 놓치기 쉬워, 이 앱은 탈 수 있는 차로 다시 계산했습니다.",
-         easy_alternatives(exp_a, a)[0].note)
+    c.eq("⑦ A 기존 앱 1위 줄의 설명", ("기존 길찾기 앱 안내 19:29 도착 → 이 앱 계산 19:34 도착",
+                                 "기존 앱이 타라는 146번(19:24 출발)은 놓치기 쉽습니다."),
+         next((r.notes for r in compare_rows(exp_a, a) if r.naive), None))
     _no_banned(c, "⑦", s)
 
 
@@ -10627,9 +10819,9 @@ def _ui30(c: _Checker, folder: Path, maps: _MapCalls) -> None:
         best_a = _best_of(expected_a)
         answer_a = [easy_answer_html(expected_a, a)]
         c.eq("⑤ 답 카드", answer_a, s.htmls("mr-answer"))
-        c.eq("⑤ 주의 카드", [caution_html(expected_a, a)], s.htmls("mr-caution"))
+        c.eq("⑤ 주의 카드는 없다(32단계)", [], s.htmls("mr-caution"))
         c.eq("⑤ 쉬운 단계", [easy_steps_html(best_a, expected_a, a)], s.htmls("mr-easy"))
-        c.eq("⑤ 다른 경로", [ALTS_HEAD_HTML, *(easy_alternative_html(row) for row in easy_alternatives(expected_a, a))], s.htmls("mr-alt"))
+        c.eq("⑤ 경로 비교 표", compare_htmls(expected_a, a), s.compare())
         call = maps.calls[-1] if maps.calls else {}
         c.eq("⑤ 지도 호출: 높이와 레이어", (380, {"추천 경로", "출발·도착"}), (call.get("height"), set(call.get("layers", ()))))
         c.true("⑤ 단추 '자세한 분석 보기'", s.has("button", "view_detail"))
@@ -10661,9 +10853,10 @@ def _ui30(c: _Checker, folder: Path, maps: _MapCalls) -> None:
     _no_banned(c, "⑥", s)
     # ⑧ B: 기존 방식 1위가 걸러짐
     s = _Screen(c, maps, view=None).run("간단히 보기 첫 실행 (⑧)").scenario("B")
-    cards = s.htmls("mr-caution")
-    c.eq("⑧ B 주의 카드", [caution_html(expected_b, b)], cards)
-    c.true("⑧ B 주의 카드는 유령", bool(cards) and 'class="mr-caution ghost"' in cards[0], cards)
+    cards = [item for item in s.compare() if 'class="mr-cmp naive"' in item]
+    c.eq("⑧ B 경로 비교 표", compare_htmls(expected_b, b), s.compare())
+    c.true("⑧ B 기존 앱 1위 줄은 놓치기 쉬움 배지와 설명", len(cards) == 1 and 'class="mr-badge ghost"' in cards[0]
+           and "기존 길찾기 앱 안내 23:30 도착 → 이 앱 계산 23:54 도착" in cards[0], cards)
     _no_banned(c, "⑧", s)
     # ⑨ 골든: 찍기를 기다림, 찍은 점이 길에서 멀다
     s = _Screen(c, maps, view=None).run("간단히 보기 첫 실행 (⑨)").scenario(ce.GOLDEN_ID)
@@ -10753,7 +10946,7 @@ def run_ui_tests(selected: Sequence[str] = ()) -> int:
     `selected` 에 검사 ID 를 주면 그 검사만 실행한다. 모두 통과하면 0, 아니면 1."""
     import streamlit_folium
     config = EngineConfig()
-    names = (config.env_seoul_key, config.env_data_go_kr_key, config.env_kakao_key, DATA_DIR_ENV)
+    names = (config.env_seoul_key, config.env_data_go_kr_key, config.env_kakao_key, config.env_tdata_key, DATA_DIR_ENV)
     saved = {name: os.environ.get(name) for name in names}
     checks = [item for item in _UI_CHECKS if not selected or item[0] in selected]
     unknown = sorted(set(selected) - {item[0] for item in _UI_CHECKS})
