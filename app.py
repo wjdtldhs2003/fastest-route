@@ -6646,6 +6646,8 @@ INTRO_STATS: tuple[tuple[str, str, str], ...] = (
      "토 11:40 강남역 → 신사역. 이 앱의 추천은 안내보다 1분 늦은 11:52 도착"),
     ("94%", "이 앱이 탈 확률 80% 이상이라 계산한 환승을 실제로 탄 비율",
      "실측 추적 3,000회 중 2,392건, 금 20:35~자정"),
+    ("24번", "카카오맵 1위 길을 같은 분의 실제 기록으로 따라간 59번 중 안내보다 2분 넘게 늦은 횟수",
+     "일 09:00~13:30, 10분마다 카카오맵에서 조회(버스 길은 최대 10분 늦음)"),
 )
 INTRO_FEATURES: tuple[tuple[str, str, str], ...] = (
     ("filter_alt", "놓치기 쉬운 환승을 미리 걸러요",
@@ -6733,7 +6735,7 @@ def intro_css() -> str:
 .mr-lp-fill { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 7px; }
 .mr-lp-sub { font-size: 0.85rem; color: var(--mr-muted); margin-top: 4px; }
 .mr-lp-axis { display: flex; justify-content: space-between; font-size: 0.8rem; color: var(--mr-muted); font-variant-numeric: tabular-nums; margin-top: 4px; }
-.mr-lp-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; }
+.mr-lp-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 14px; }
 .mr-lp-stat b { display: block; font-size: clamp(2rem, 5vw, 2.6rem); line-height: 1.1; font-weight: 800; font-variant-numeric: tabular-nums; margin-bottom: 8px; }
 .mr-lp-stat div { font-size: 0.98rem; line-height: 1.5; word-break: keep-all; }
 .mr-lp-stat small { display: block; font-size: 0.82rem; line-height: 1.45; color: var(--mr-muted); margin-top: 8px; word-break: keep-all; }
@@ -10621,7 +10623,7 @@ def _ui43(c: _Checker, folder: Path, maps: _MapCalls) -> None:
     page_text = " ".join(s.strings())
     c.true("① 소개 글: 제목, 대표 장면 세 줄(16:23 안내, 16:41 실제, 16:28 추천), 숫자 셋, 기능 넷, 계산 네 단계",
            all(t in page_text for t in (APP_TITLE, "16:23 도착", "16:41 도착 · 18분 늦음", "16:28 도착 · 13분 빠름", "46~57%",
-                                         "최대 21분", "94%", "기존 앱 1위와 나란히 비교", "확률 계산")), page_text[:400])
+                                         "최대 21분", "94%", "59번 중 안내보다 2분 넘게", "기존 앱 1위와 나란히 비교", "확률 계산")), page_text[:400])
     _no_banned(c, "①", s)
     scenes = {"scenes": [{"at": "2026-11-02 08:00:00", "name": "시험 장면", "scenario": syn.id},
                          {"at": "2026-11-02 08:20:00", "name": "없는 시나리오", "scenario": "NOPE"},
