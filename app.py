@@ -349,6 +349,7 @@ def page_css(tokens: Mapping[str, str]) -> str:
 .mr-guide.ghost {{ --c: var(--mr-ghost); }}
 .mr-guide.warn {{ --c: var(--mr-risky); }}
 .mr-guide .mr-ghead {{ font-weight: 700; margin-bottom: 2px; }}
+.mr-guide .mr-gkick {{ font-size: 0.8rem; font-weight: 700; color: var(--mr-ink2); margin-bottom: 6px; }}
 .mr-guide p {{ margin: 0 0 2px 0; }}
 .mr-guide .mr-gnote {{ margin-top: 6px; font-size: 0.85rem; color: var(--mr-ink2); }}
 .mr-easy {{ margin-top: 2px; }}
@@ -7062,6 +7063,7 @@ GUIDE_NO_GPS_TEXT = "위치를 받지 못해 마지막 출발점에 그대로 �
 GUIDE_ON_VEHICLE_TEXT = "차 안에서는 위치 대신 탄 차의 운행으로 계산합니다."
 GUIDE_SKIP_NOTE = "{mode}에서는 단추로 1분씩 시간을 앞당겨 볼 수 있습니다."
 GUIDE_TICK_TEXT = "{clock} 기준으로 다시 계산했습니다. 다음 계산은 약 1분 뒤입니다."
+GUIDE_KICKER = "길 안내 중 · 가는 동안 1분마다 다시 계산해, 갈아탈 차를 놓치기 쉬워지면 바로 알려 드립니다"
 GUIDE_START_KINDS = ("PLACE", "POINT")  # 안내를 시작할 수 있는 출발(차량 안 출발은 "탔어요"로 들어간다)
 GUIDE_WATCH_HTML = '<div class="mr-gwatch" aria-live="polite"></div>'
 # 화면이 켜져 있는 동안 위치를 계속 받고(watchPosition), 화면 꺼짐을 막는다(Screen Wake Lock, 지원하는 브라우저만).
@@ -7259,7 +7261,8 @@ def guide_status(output: EngineOutput, scenario: Scenario | None, guide: Mapping
 
 def guide_status_html(status: GuideStatus, note: str) -> str:
     body = "".join(f"<p>{esc(line)}</p>" for line in status.lines)
-    return (f'<div class="mr-guide {status.tone}"><div class="mr-ghead">{esc(status.head)}</div>{body}'
+    return (f'<div class="mr-guide {status.tone}"><div class="mr-gkick">{esc(GUIDE_KICKER)}</div>'
+            f'<div class="mr-ghead">{esc(status.head)}</div>{body}'
             f'<p class="mr-gnote">{esc(note)}</p></div>')
 
 
@@ -7479,13 +7482,15 @@ def render_guide(p: Prepared, output: EngineOutput, follow_status: GuideStatus) 
             st.button(GUIDE_SWITCH_LABEL, key="guide_switch", type="primary", width="stretch", on_click=_on_guide_switch,
                       args=(items[follow_status.switch_id].model_dump_json(),))
         follow = items.get(follow_status.follow_id) if follow_status.follow_id else None
+        # 주 단추는 하나만 크게: 길 바꾸기 단추가 있으면 탔어요·내렸어요는 보통 단추로
+        main_type = "secondary" if follow_status.switch_id is not None and follow_status.switch_id in items else "primary"
         if follow is not None:
             if guide.get("on") and follow.rides and follow.rides[0].board_index is None:
                 ride = follow.rides[0]
                 coords = _node_latlon(p.display, ride.alight_node_id)
                 if coords is not None:
                     stop = short_stop_name(ride.alight_node_id, p.display)
-                    st.button(GUIDE_ALIGHT_LABEL.format(stop=stop), key="guide_alight", width="stretch",
+                    st.button(GUIDE_ALIGHT_LABEL.format(stop=stop), key="guide_alight", width="stretch", type=main_type,
                               on_click=_on_guide_alight, args=(coords,))
             else:
                 vehicle = guide_vehicle_args(follow, follow_status.kept)
@@ -7493,12 +7498,12 @@ def render_guide(p: Prepared, output: EngineOutput, follow_status: GuideStatus) 
                     index = _next_ride(follow)
                     option = _vehicle(_boardings(follow).get(index), follow_status.kept)
                     label = GUIDE_BOARD_LABEL.format(vehicle=easy_vehicle(follow.rides[index - 1], option, p.display, c0))
-                    st.button(label, key="guide_board", width="stretch", on_click=_on_guide_board,
+                    st.button(label, key="guide_board", width="stretch", type=main_type, on_click=_on_guide_board,
                               args=(vehicle, p.base_json))
         if p.mode in (DataMode.REPLAY.value, DataMode.SIMULATION.value):
             st.caption(GUIDE_SKIP_NOTE.format(mode=MODE_NAMES[p.mode]))
-            st.button(GUIDE_SKIP_LABEL, key="guide_skip", width="stretch", on_click=_on_guide_skip)
-        st.button(GUIDE_STOP_LABEL, key="guide_stop", width="stretch", on_click=_on_guide_stop)
+            st.button(GUIDE_SKIP_LABEL, key="guide_skip", type="tertiary", on_click=_on_guide_skip)
+        st.button(GUIDE_STOP_LABEL, key="guide_stop", type="tertiary", on_click=_on_guide_stop)
         watch = st.components.v2.component(GUIDE_COMPONENT_NAME, html=GUIDE_WATCH_HTML, js=GUIDE_WATCH_JS)
         watch(key=GUIDE_COMPONENT_KEY, data={"min_s": GUIDE_GPS_MIN_S, "move_m": GUIDE_GPS_MOVE_M, "timeout_ms": GPS_TIMEOUT_MS},
               on_fix_change=_on_guide_fix)
@@ -10687,7 +10692,7 @@ def _ui41_cards() -> list[tuple[str, str, str, str, str | None, bool]]:
 
 
 def _guide_head(s: "_Screen") -> str:
-    found = [_plain(value) for value in s.htmls("mr-guide")]
+    found = [_plain(value).removeprefix(GUIDE_KICKER).strip() for value in s.htmls("mr-guide")]
     return found[0] if found else ""
 
 
