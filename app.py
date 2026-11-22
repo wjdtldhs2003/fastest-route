@@ -6817,6 +6817,7 @@ def scene_apply(state: MutableMapping[str, Any], scene: DemoScene, summary: Mapp
     store_value(state, "replay_date", scene.moment.date())
     store_value(state, "replay_time", scene.moment.time().replace(tzinfo=None))
     store_value(state, "depart_offset_s", 0)
+    store_value(state, "use_bike", False)  # 장면은 버스·지하철만으로 연다(대표 숫자는 따릉이 없이, 39단계 점검). 토글로 켤 수 있다
 
 # --- 소개 페이지 (§6.12, 34단계) ---
 #
@@ -6834,12 +6835,12 @@ INTRO_SCENES_NOTE = "누르면 길찾기 화면이 그 날짜와 시각의 실�
 INTRO_HERO = ("탈 수 있다던 그 버스,", "실제로는 놓칩니다.")
 INTRO_HERO_SUB = "지금 나서면 실제로 가장 빨리 도착하는 길을 찾아 드려요."
 # 대표 장면(기획안 6절 표 첫 줄): 토 16:13, 2호선 안에서 출발. 숫자는 따릉이 없이(버스·지하철만) 계산한 값이다.
-INTRO_VERSUS = Versus(  # 소개의 "토 16:13" 장면 단추로 연 화면의 맞대기 카드와 같은 숫자(39단계 점검)
-    gain=15, late=18, start="16:13", naive_title="지하철 2호선 → 345번 → 143번", best_title="지하철 2호선 → 따릉이",
-    promised="16:23", naive_real="16:41", best_arrive="16:26", best_p90="16:29",
-    promised_min=10, naive_min=28, best_min=13,
+INTRO_VERSUS = Versus(  # 소개의 "토 16:13" 장면 단추로 연 화면(따릉이 끔)의 맞대기 카드와 같은 숫자(39단계 점검)
+    gain=13, late=18, start="16:13", naive_title="지하철 2호선 → 345번 → 143번", best_title="지하철 2호선 → 143·146·345번",
+    promised="16:23", naive_real="16:41", best_arrive="16:28", best_p90="",
+    promised_min=10, naive_min=28, best_min=15,
     why=("정류장에서 345번을 9분, 143번을 7분 기다립니다.",),
-    best_why="정류장에서 차를 기다리지 않습니다.")
+    best_why="143·146·345번 가운데 먼저 오는 차를 탑니다.")
 # (사진 파일, 작은 제목, 큰 제목 두 줄, 설명)
 INTRO_PANELS: tuple[tuple[str, str, tuple[str, str], str], ...] = (
     ("answer.jpg", "답부터", ("몇 시에 도착하는지,", "늦어도 몇 시인지"),
@@ -10845,9 +10846,9 @@ def _ui43(c: _Checker, folder: Path, maps: _MapCalls) -> None:
          (intro_keys(s), s.has("button", "to_intro") or bool(s.htmls("mr-answer")), [k for k in intro_keys(s) if "scene" in k],
           s.state(PAGE_KEY)))
     page_text = " ".join(s.strings())
-    c.true("① 소개 글(39단계): 제목, 첫 화면 문장, 16:13 맞대기(안내 16:23, 실제 16:41, 추천 16:26, 15분 먼저), 화면 셋, 숫자 넷",
+    c.true("① 소개 글(39단계): 제목, 첫 화면 문장, 16:13 맞대기(안내 16:23, 실제 16:41, 추천 16:28, 13분 먼저), 화면 셋, 숫자 넷",
            all(t in page_text for t in (APP_TITLE, INTRO_HERO[0], INTRO_HERO[1], "안내 16:23", "실제 16:41 도착", "안내보다 18분 늦음",
-                                         "16:26 도착", "15분", "46~57%", "최대 21분", "94%", "45번 중 안내보다 2분 이상",
+                                         "16:28 도착", "13분", "46~57%", "최대 21분", "94%", "45번 중 안내보다 2분 이상",
                                          *(panel[2][0] for panel in INTRO_PANELS))), page_text[:400])
     c.eq("① 소개의 휴대폰 화면 사진 셋이 있다", [True, True, True], [bool(intro_image(panel[0])) for panel in INTRO_PANELS])
     _no_banned(c, "①", s)
@@ -10888,8 +10889,10 @@ def _ui43(c: _Checker, folder: Path, maps: _MapCalls) -> None:
          (scene_window(two, at(11, 40)), scene_window(two, at(16, 13)), scene_window(two, at(14, 0)), scene_window(two, at(11, 40, 22)),
           scene_window({"windows": []}, at(11, 40))))
     scenario, sources = _replayed(truth, syn, config, models, _kst_unix(2026, 11, 2, 8, 0))
-    want = easy_answer(ce.run_engine(scenario, syn.default_query, config, sources), scenario)
+    no_bike = config.model_copy(update={"modes_enabled": tuple(m for m in config.modes_enabled if m != TravelMode.BIKE)})
+    want = easy_answer(ce.run_engine(scenario, syn.default_query, no_bike, sources), scenario)  # 장면은 따릉이 끔으로 연다
     answer = s.html_text("mr-answer")
+    c.eq("④ 장면은 따릉이를 끈 채로 연다(39단계 점검)", False, s.state("use_bike"))
     c.true("④ 답 카드 = 그 시각 기록 재생의 엔진 결과(제목, 시각)", want is not None and want.title in answer and want.span in answer,
            (answer, want))
     c.true("④ 길찾기 화면에는 장면 단추가 없음(34단계)", not intro_keys(s) and not s.has("button_group", "scene_pick"),
