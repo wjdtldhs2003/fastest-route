@@ -2085,8 +2085,10 @@ def compare_rows(output: EngineOutput, scenario: Scenario | None, shown_id: str 
         it = items[rid]
         mean = it.arrival.mean_s
         common = " → ".join(part[:common_n]) + " → " if common_n else ""
+        # 35단계: 기존 방식 1위 줄의 배지는 기존 앱이 타라는 차 기준. 그 차가 놓치기 쉬우면 "놓치기 쉬움"(설명 줄과 같은 말)
+        grade = Grade.GHOST if rid == naive_id and _ghost_boarding(it) is not None else it.grade
         rows.append(CompareRow(
-            rid, common, " → ".join(part[common_n:]), it.grade,
+            rid, common, " → ".join(part[common_n:]), grade,
             "-" if mean is None else fmt_minutes(trip_minutes(c0, mean)), "-" if mean is None else fmt_hm(c0, mean),
             fare_text(it), rid == output.comparison.best_id, rid == shown, rid == naive_id,
             it.status == RouteStatus.RANKED, notes if rid == naive_id else ()))
@@ -6635,7 +6637,7 @@ INTRO_SCENES_NOTE = "누르면 길찾기 화면이 그 날짜와 시각의 실�
 # 대표 장면(기획안 6절 표 첫 줄): 토 16:13, 2호선을 타고 가는 중에 출발
 INTRO_SCENE_ROWS: tuple[tuple[str, str, str, int, str], ...] = (
     ("기존 앱 1위 안내", "16:23 도착", "muted", 10, "2호선 → 345번 → 143번"),
-    ("그대로 따라가면 실제로", "16:41 도착 · 18분 늦음", "ghost", 28, "345번을 놓쳐 다음 차를 기다림"),
+    ("그대로 따라가면 실제로", "16:41 도착 · 18분 늦음", "ghost", 28, "345번과 143번이 도착 예측보다 늦게 옴"),
     ("이 앱의 추천", "16:28 도착 · 13분 빠름", "safe", 15, "버스·지하철만으로"),
 )
 INTRO_SCENE_SPAN_MIN = 30
@@ -6643,7 +6645,7 @@ INTRO_STATS: tuple[tuple[str, str, str], ...] = (
     ("46~57%", "기존 앱 1위가 놓치기 쉬운 환승을 끼고 있던 출발의 비율",
      "강남역 → 신사역, 금·토 네 시간대, 1분마다 출발을 실제 기록으로 재생(신분당선 포함)"),
     ("최대 21분", "기존 앱 1위를 따라갔을 때 안내보다 늦게 도착한 시간",
-     "토 11:40 강남역 → 신사역. 이 앱의 추천은 안내보다 1분 늦은 11:52 도착"),
+     "토 11:40 강남역 → 신사역. 논현역에서 갈아탈 140번을 놓침. 이 앱의 추천은 11:53 도착"),
     ("94%", "이 앱이 탈 확률 80% 이상이라 계산한 환승을 실제로 탄 비율",
      "실측 추적 3,000회 중 2,392건, 금 20:35~자정"),
     ("24번", "카카오맵 1위 길을 같은 분의 실제 기록으로 따라간 59번 중 안내보다 2분 넘게 늦은 횟수",
@@ -6779,9 +6781,9 @@ def render_intro(ctx: DataContext) -> None:
     st.button(INTRO_START, key="intro_start", type="primary", icon=":material/arrow_forward:", on_click=_go_app)
     st.html('<div class="mr-lp"><div class="mr-lp-sec"><div class="mr-lp-kicker">같은 순간, 두 안내</div>'
             '<h2>화면에서 가장 빠른 길이 실제로는 가장 늦어집니다</h2>'
-            '<p class="mr-lp-p">토요일 16:13, 2호선을 타고 가는 중에 출발한 실제 장면입니다. 기존 길찾기 방식은 보통 걸음(1.25 m/s), '
-            '신호 대기 0으로 계산해 첫 차를 “탈 수 있다”고 안내합니다. 실제로는 걸음이 느리거나 신호에 걸리고, 버스는 안내보다 일찍 옵니다. '
-            '그 차를 놓치면 다음 차를 기다려야 합니다.</p>'
+            '<p class="mr-lp-p">토요일 16:13, 2호선을 타고 가는 중에 출발한 실제 장면입니다. 기존 길찾기 방식은 그 순간의 도착 예측, 보통 걸음(1.25 m/s), '
+            '신호 대기 0으로 계산해 “탈 수 있다”고 안내합니다. 실제로는 버스가 예측보다 일찍 오거나 늦게 오고, 걸음이 느리거나 신호에 걸립니다. '
+            '이 장면에서는 345번과 143번이 예측보다 늦게 와서 안내보다 18분 늦었습니다. 이 앱은 수집한 기록으로 실제 도착을 계산해 다른 길을 고릅니다.</p>'
             f'{intro_scene_html()}</div>'
             '<div class="mr-lp-sec"><div class="mr-lp-kicker">실제 기록으로 확인한 숫자</div>'
             '<h2>강남·삼성 일대 버스 6개 노선, 따릉이, 신호를 금·토요일에 수집해 다시 계산했습니다</h2>'
@@ -10133,6 +10135,11 @@ def _ui31(c: _Checker, folder: Path, maps: _MapCalls) -> None:
     c.eq("② E2: 기존 앱 1위 줄의 설명", ("기존 길찾기 앱 안내 19:44 도착 → 이 앱 계산 19:47 도착 (3분 늦음)",
                                    "기존 앱이 타라는 2호선 외선 종합운동장행 열차(19:39 출발)는 놓치기 쉽습니다."),
          next((r.notes for r in compare_rows(out2, a) if r.naive), None))
+    naive2 = next((it for it in out2.itineraries if it.itinerary_id == out2.comparison.naive_best_id), None)
+    c.eq("② E2: 기존 앱 1위 줄 배지는 놓치기 쉬움, 그 경로의 자체 등급은 그대로(35단계: 설명 줄과 같은 말)",
+         (Grade.GHOST, True, True),
+         (next((r.grade for r in compare_rows(out2, a) if r.naive), None), naive2 is not None and _ghost_boarding(naive2) is not None,
+          "놓치기 쉬움" in _plain(next((h for h in s.compare() if "기존 앱 1위" in h), ""))))
     _no_banned(c, "②", s)
     # ③ 자세히 보기, 사이드바
     s = _Screen(c, maps).run("자세히 보기 첫 실행 (UI-31)")
