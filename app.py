@@ -2043,7 +2043,9 @@ def naive_notes(output: EngineOutput, scenario: Scenario | None) -> tuple[str, .
     if promised is None:
         lines.append("기존 길찾기 앱은 탈 차가 없어 도착 시각을 안내하지 못합니다.")
     elif cmp.naive_mean_s is not None and not cmp.same:
-        lines.append(f"기존 길찾기 앱 안내 {fmt_hm(c0, promised)} 도착 → 이 앱 계산 {fmt_hm(c0, cmp.naive_mean_s)} 도착")
+        said, real = fmt_hm(c0, promised), fmt_hm(c0, cmp.naive_mean_s)
+        late = minute_of(c0 + cmp.naive_mean_s) - minute_of(c0 + promised)  # 33단계: 보이는 두 시각(분 단위)의 차
+        lines.append(f"기존 길찾기 앱 안내 {said} 도착 → 이 앱 계산 {real} 도착" + (f" ({late}분 늦음)" if late >= 1 else ""))
     else:
         lines.append(f"기존 길찾기 앱 안내 {fmt_hm(c0, promised)} 도착")
     ghost = _ghost_boarding(naive)
@@ -3886,7 +3888,7 @@ def map_pick_of(state: Mapping[str, Any], scenario: Scenario):
 
 FOOTER_TEXT = "데이터: 서울 열린데이터광장, 공공데이터포털, © OpenStreetMap 기여자(ODbL)"
 MAP_NOTE = "지도 타일 © OpenStreetMap 기여자 · 지도 표시는 인터넷 연결이 필요합니다"
-MAP_SIMPLE_NOTE = "지도의 번호는 아래 단계의 번호입니다(노선 번호가 아닙니다). "  # 32단계: 4호선으로 읽히지 않게
+MAP_SIMPLE_NOTE = "지도의 번호는 단계의 번호입니다. "  # 32단계, 33단계: 표지 옆에 노선 이름을 붙여 짧게
 KAKAO_NOTE = " · 경로 비교: 카카오"
 KPI_DELTA_NOTE = "기존 1위 대비"  # KPI 변화량 설명(§6.3). 1440 px 화면의 타일 폭에서 잘리지 않는 길이
 
@@ -4511,13 +4513,21 @@ _SIDE_SHIFT = {"up": "translate(-50%,calc(-100% - 7px))", "down": "translate(-50
                "left": "translate(calc(-100% - 9px),-50%)", "right": "translate(9px,-50%)"}
 
 
-def _badge_html(number: str, fill: str) -> str:
-    """간단히 보기 지도의 단계 번호 표지(§6.9, 19단계): 수단 색 원에 흰 번호, 흰 테두리 2 px. 쉬운 단계 목록의 번호와 같다."""
+def _badge_html(number: str, fill: str, short: str = "") -> str:
+    """간단히 보기 지도의 단계 번호 표지(§6.9, 19단계): 수단 색 원에 흰 번호, 흰 테두리 2 px. 쉬운 단계 목록의 번호와 같다.
+    33단계: `short`(노선 이름, "2호선", "143·146·345번", "따릉이")가 있으면 원 오른쪽에 같은 색 알약으로 잇는다(번호가 노선으로
+    읽히지 않게). 원의 가운데가 그 자리다."""
     size = SIMPLE_MAP_BADGE_PX
     style = (f"width:{size}px;height:{size}px;box-sizing:border-box;border-radius:50%;background:{fill};border:2px solid #ffffff;"
              "color:#ffffff;font:700 12px/1 sans-serif;display:flex;align-items:center;justify-content:center;"
-             "font-variant-numeric:tabular-nums;box-shadow:0 1px 2px rgba(0,0,0,0.35);")
-    return f'<div class="mr-map-badge" style="{style}">{esc(number)}</div>'
+             "font-variant-numeric:tabular-nums;box-shadow:0 1px 2px rgba(0,0,0,0.35);flex:none;")
+    circle = f'<div style="{style}">{esc(number)}</div>'
+    if not short:
+        return f'<div class="mr-map-badge" style="{style}">{esc(number)}</div>'
+    tag = (f"margin-left:-6px;padding:1px 8px 1px 9px;background:{fill};color:#ffffff;border:2px solid #ffffff;border-left:none;"
+           "border-radius:0 999px 999px 0;font:600 12px/1.5 sans-serif;white-space:nowrap;box-shadow:0 1px 2px rgba(0,0,0,0.25);")
+    return (f'<div class="mr-map-badge" style="display:flex;align-items:center;width:max-content;">{circle}'
+            f'<span style="{tag}">{esc(short)}</span></div>')
 
 
 def _side_pill_html(text: str, side: str, *, fill: str, border: str, color: str) -> str:
@@ -4661,7 +4671,9 @@ def label_extents(text: str, side: str) -> tuple[float, float, float, float]:
     """점에서 라벨이 뻗는 길이(왼쪽, 오른쪽, 위, 아래, px). 자리 "badge" 는 점 가운데의 단계 번호 표지(지름 `SIMPLE_MAP_BADGE_PX`)."""
     if side == "badge":
         r = SIMPLE_MAP_BADGE_PX / 2
-        return r, r, r, r
+        number, _, short = text.partition(" ")
+        tail = pill_size(short)[0] - 3.0 if short else 0.0  # 33단계: 원 오른쪽의 노선 알약(왼쪽 6 px 는 원 밑에 겹친다)
+        return r, r + tail, r, r
     w, h = pill_size(text)
     if side == "up":
         return w / 2, w / 2, 7.0 + h, 0.0
@@ -4715,6 +4727,16 @@ def label_sides(points: Sequence[tuple[float, float]]) -> list[str]:
     return sides
 
 
+def map_short(step: GuideStep) -> str:
+    """지도 표지 옆 노선 이름(33단계): 타기는 단계 글의 첫 낱말("2호선", "143·146·345번"), 따릉이는 "따릉이",
+    지금 탄 차에서 내리기는 "내리기". 그 밖은 빈 글자."""
+    if step.kind == "bike":
+        return "따릉이"
+    if step.kind in ("bus", "subway"):
+        return "내리기" if step.main.endswith("내리기") else step.main.split(" ")[0]
+    return ""
+
+
 def build_simple_map(scenario: Scenario, output: EngineOutput | None, best_id: str | None, pick: tuple | None = None, *,
                      tokens: Mapping[str, str] | None = None) -> folium.Map:
     """간단히 보기 지도(§6.9): 추천 경로와 출발·도착만. 레이어 선택 창이 없고, 라벨은 이웃 점의 반대쪽에 둔다."""
@@ -4745,7 +4767,7 @@ def build_simple_map(scenario: Scenario, output: EngineOutput | None, best_id: s
     best = _items(output).get(best_id) if output is not None and best_id else None
     origin = query.origin if query is not None else None
     labels: list[tuple[tuple[float, float], str]] = []  # 출발·도착 알약 (자리, 글자)
-    badges: list[tuple[tuple[float, float], str, str]] = []  # 단계 번호 표지 (자리, 번호, 채움)
+    badges: list[tuple[tuple[float, float], str, str, str]] = []  # 단계 번호 표지 (자리, 번호, 채움, 노선 이름)
     placed: list[tuple[tuple[float, float], str, str]] = []
     bounds: list[tuple[float, float]] = []
     if best is not None:
@@ -4788,7 +4810,7 @@ def build_simple_map(scenario: Scenario, output: EngineOutput | None, best_id: s
         for number, step in enumerate(easy_steps(best, output, scenario), start=1):
             location = coords(step.spot) if step.spot else None
             if location is not None and _spot(location) not in end_spots:  # 출발·도착 자리는 그 알약이 말한다
-                badges.append((location, str(number), fills.get(step.kind, t["ink"])))
+                badges.append((location, str(number), fills.get(step.kind, t["ink"]), map_short(step)))
     holder = next((child for child in fmap._children.values() if isinstance(child, folium.FeatureGroup)), None)
     if labels:
         merged: dict[tuple[float, float], list] = {}
@@ -4797,15 +4819,15 @@ def build_simple_map(scenario: Scenario, output: EngineOutput | None, best_id: s
             if text not in entry[1]:
                 entry[1].append(text)
         entries = list(merged.values())
-        sides = label_sides([entry[0] for entry in entries] + [location for location, _, _ in badges])[:len(entries)]
+        sides = label_sides([entry[0] for entry in entries] + [location for location, _, _, _ in badges])[:len(entries)]
         placed = [(entry[0], " · ".join(entry[1]), side) for entry, side in zip(entries, sides)]
         for location, text, side in placed:
             _marker(holder, location, _icon(_side_pill_html(text, side, fill=t["ink"], border="#ffffff", color="#ffffff"),
                                             (0, 0), (0, 0)), z=1000)
-    for location, number, fill in badges:
+    for location, number, fill, short in badges:
         size = SIMPLE_MAP_BADGE_PX
-        _marker(holder, location, _icon(_badge_html(number, fill), (size, size), (size // 2, size // 2)), z=950)
-    placed = placed + [(location, number, "badge") for location, number, _ in badges]
+        _marker(holder, location, _icon(_badge_html(number, fill, short), (size, size), (size // 2, size // 2)), z=950)
+    placed = placed + [(location, f"{number} {short}".strip(), "badge") for location, number, _, short in badges]
     if pick is not None:
         bounds += [(marker[0], marker[1]) for marker in pick[1:] if marker is not None]
     bounds = [point for point in bounds if point is not None]
@@ -6511,6 +6533,10 @@ def render_simple(p: Prepared, output: EngineOutput | None, moved: Query | None,
                 st.button(BACK_TO_BEST_LABEL, key="pick_best", on_click=_on_pick, args=(best_id,), width="stretch")
             if status is None and shown_id is not None and _items(output)[shown_id].status == RouteStatus.RANKED:
                 render_guide_start(p, _items(output)[shown_id])
+            # 33단계: 경로 비교 표는 답 카드(안내 시작) 바로 아래. 기존 앱 1위의 설명은 그 줄에 붙는다.
+            # 안내 중에는 바꾸기를 안내 카드가 한다(§6.10)
+            if ok:
+                render_simple_alternatives(output, p.display, shown_id, picks=status is None)
             walk_control()
             if best_id is not None and shown_id is not None:
                 shown = _items(output)[shown_id]
@@ -6521,8 +6547,6 @@ def render_simple(p: Prepared, output: EngineOutput | None, moved: Query | None,
             walk_control()
     with slots["side"]:
         clicked = render_map(p, output, shown_id, tokens, simple=True)
-        if ok:  # 경로 비교 표는 지도 아래(32단계): 기존 앱 1위의 설명은 그 줄에 붙는다. 안내 중에는 바꾸기를 안내 카드가 한다(§6.10)
-            render_simple_alternatives(output, p.display, shown_id, picks=status is None)
     st.button(DETAIL_BUTTON_LABEL, key="view_detail", on_click=_on_view_detail, width="stretch")
     if output is not None and output.warnings:
         st.caption(WARNINGS_EASY_TEXT.format(n=len(output.warnings)))
@@ -9921,7 +9945,7 @@ def _ui31(c: _Checker, folder: Path, maps: _MapCalls) -> None:
     c.eq("⓪ 표의 줄: 공통 앞부분, 뒷부분, 분, 도착, 요금, 추천, 기존 앱 1위, 설명",
          [("지하철 2호선 → ", "지하철 9호선 → 따릉이", "24분", "19:44", "2,550원", True, False, ()),
           ("지하철 2호선 → ", "지하철 9호선 → 143·146·345번", "27분", "19:47", "1,550원", False, True,
-           ("기존 길찾기 앱 안내 19:40 도착 → 이 앱 계산 19:47 도착",)),
+           ("기존 길찾기 앱 안내 19:40 도착 → 이 앱 계산 19:47 도착 (7분 늦음)",)),
           ("지하철 2호선 → ", "지하철 9호선", "26분", "19:46", "1,550원", False, False, ())],
          [(r.common, r.tail, r.minutes, r.arrive, r.fare, r.recommended, r.naive, r.notes) for r in compare_rows(out1, a)])
     c.eq("⓪ 주의 카드는 없다(표의 줄로 옮김)", [], s.htmls("mr-caution"))
@@ -9942,7 +9966,7 @@ def _ui31(c: _Checker, folder: Path, maps: _MapCalls) -> None:
          (s.state("origin_place"), s.state("dest_place")))
     c.eq("② E2: 장소 이름", ("청담역·경기고교 정류장", "종합운동장역 북쪽 출구"), (s.state("origin_place"), s.state("dest_place")))
     c.eq("② E2: 경로 비교 표", compare_htmls(out2, a), s.compare())
-    c.eq("② E2: 기존 앱 1위 줄의 설명", ("기존 길찾기 앱 안내 19:44 도착 → 이 앱 계산 19:47 도착",
+    c.eq("② E2: 기존 앱 1위 줄의 설명", ("기존 길찾기 앱 안내 19:44 도착 → 이 앱 계산 19:47 도착 (3분 늦음)",
                                    "기존 앱이 타라는 2호선 외선 종합운동장행 열차(19:39 출발)는 놓치기 쉽습니다."),
          next((r.notes for r in compare_rows(out2, a) if r.naive), None))
     _no_banned(c, "②", s)
@@ -9988,11 +10012,11 @@ _UI34_EXPECT: dict[str, tuple[str | None, str | None, str | None, str | None, tu
 }
 
 _UI34_MAP: dict[str, tuple[list[tuple[str, str]], list[str], tuple[tuple[int, int], tuple[int, int]]]] = {
-    'A-E1': ([('출발', 'up'), ('도착', 'up')], ['2', '4', '6'], ((36, 36), (36, 60))),
-    'A-E2': ([('출발', 'up'), ('도착', 'right')], ['2', '4'], ((36, 36), (57, 60))),
-    'B': ([('출발', 'left'), ('도착', 'up')], ['2'], ((36, 36), (36, 60))),
-    'GOLDEN': ([('출발', 'left'), ('도착', 'right')], ['2'], ((57, 36), (57, 60))),
-    'GOLDEN-DL': ([('출발', 'left'), ('도착', 'right')], ['2'], ((57, 36), (57, 60))),
+    'A-E1': ([('출발', 'up'), ('도착', 'up')], ['2 2호선', '4 9호선', '6 따릉이'], ((36, 36), (63, 60))),
+    'A-E2': ([('출발', 'up'), ('도착', 'right')], ['2 따릉이', '4 2호선'], ((36, 36), (57, 60))),
+    'B': ([('출발', 'left'), ('도착', 'up')], ['2 140·470번'], ((36, 36), (98, 60))),
+    'GOLDEN': ([('출발', 'left'), ('도착', 'right')], ['2 따릉이'], ((57, 36), (57, 60))),
+    'GOLDEN-DL': ([('출발', 'left'), ('도착', 'right')], ['2 따릉이'], ((57, 36), (57, 60))),
 }
 
 
@@ -10056,7 +10080,7 @@ def _ui34(c: _Checker, folder: Path, maps: _MapCalls) -> None:
     c.true("③ B: 쉬운 단계의 놓치면 묶음", 'class="mr-backup"' in steps and "놓치면 470번" in _plain(steps), _plain(steps))
     order = [i for i, item in enumerate(s.at.html) if 'class="mr-easy' in item.value or 'class="mr-alts-h' in item.value]
     kinds = ["easy" if 'class="mr-easy' in s.at.html[i].value else "compare" for i in order]
-    c.eq("③ B: 쉬운 단계가 경로 비교 표보다 앞", ["easy", "compare"], kinds)
+    c.eq("③ B: 경로 비교 표가 쉬운 단계보다 앞(33단계)", ["compare", "easy"], kinds)
     # ④ 마감
     s.set("toggle", "use_deadline", True)
     s.set("time_input", "deadline_time", datetime.time(23, 40, 0))
@@ -10087,7 +10111,8 @@ def _ui34(c: _Checker, folder: Path, maps: _MapCalls) -> None:
            len(rows) >= 4 and all(len(row) == 6 for row in rows) and any(row[2:] == label_extents("출발", side) for row in rows
                                                                           for side in ("up", "down", "left", "right")), rows)
     c.true("⑥ 지도 HTML 에 라벨 맞춤 스크립트 (가장 큰 확대 단계 17)", "fitLabels" in fmap.get_root().render() and fits and fits[0].zmax == 17.0, "")
-    c.true("⑥ 번호 표지 줄은 (위도, 경도, 11, 11, 11, 11)", sum(1 for row in rows if row[2:] == (11.0, 11.0, 11.0, 11.0)) == 3, rows)
+    c.eq("⑥ 번호 표지 줄의 (왼쪽, 오른쪽, 위, 아래): 원 반지름 11, 오른쪽은 11 + 노선 알약 - 3 (2호선 51, 9호선 51, 따릉이 56; 33단계)",
+         [(11.0, 59.0, 11.0, 11.0), (11.0, 59.0, 11.0, 11.0), (11.0, 64.0, 11.0, 11.0)], [row[2:] for row in rows if row[4:] == (11.0, 11.0)])
     cases = _ui34_cases()
     for key, expected in _UI34_MAP.items():
         scenario, query, cfg = cases[key]
@@ -10557,7 +10582,7 @@ def _ui33(c: _Checker, folder: Path, maps: _MapCalls) -> None:
     clamps = [child for child in fmap._children.values() if isinstance(child, FitClamp)]
     fits = _fit_padding(fmap)
     c.eq("① E1 간단한 지도: 맞춤 여백과 줄이기 요소 (여백, 줄이기의 여백, 기준 길이)",
-         ([((36, 36), (36, 60))], [("[36.0, 36.0]", "[36.0, 60.0]", 200.0)]),
+         ([((36, 36), (63, 60))], [("[36.0, 36.0]", "[63.0, 60.0]", 200.0)]),
          (fits, [(clamp.top_left, clamp.bottom_right, clamp.span) for clamp in clamps]))
     html = fmap.get_root().render()
     c.true("① E1 간단한 지도: 축척은 미터만, Leaflet 머리글 없음", SCALE_METRIC_CSS in html and "attributionControl.setPrefix(false)" in html, "")
@@ -10607,7 +10632,7 @@ def _ui32(c: _Checker, folder: Path, maps: _MapCalls) -> None:
           ("지하철 2호선 → 지하철 3호선", "19분", "23:39", "1,550원", False, False, True),
           ("140·470번 · 신분당선강남역 승차", "21분", "23:41", "1,500원", False, False, True)],
          [(r.common + r.tail, r.minutes, r.arrive, r.fare, r.recommended, r.naive, r.pickable) for r in rows_b])
-    c.eq("② B: 기존 앱 1위(걸러짐) 줄의 설명", ("기존 길찾기 앱 안내 23:30 도착 → 이 앱 계산 23:54 도착",
+    c.eq("② B: 기존 앱 1위(걸러짐) 줄의 설명", ("기존 길찾기 앱 안내 23:30 도착 → 이 앱 계산 23:54 도착 (24분 늦음)",
                                          "기존 앱이 타라는 360번 막차(23:22 출발)는 놓치기 쉽습니다."), rows_b[1].notes)
     c.eq("② B: 줄 단추 (보는 줄과 걸러진 줄에는 없음)", [(f"alt_pick_{n}", ALT_PICK_LABEL) for n in (3, 4, 5)],
          [(item.key, item.label) for item in s.at.main.button if str(item.key).startswith("alt_pick_")])
@@ -10648,7 +10673,7 @@ def _ui32(c: _Checker, folder: Path, maps: _MapCalls) -> None:
     s.set("select_slider", "depart_offset_s", 60)
     rows_60 = compare_rows(exp_60, shifted)
     c.eq("⑥ 경로 비교 표", compare_htmls(exp_60, shifted), s.compare())
-    c.eq("⑥ 이름과 설명", [("따릉이", ()), ("140·470번 · 지하철2호선강남역 승차", ("기존 길찾기 앱 안내 23:32 도착 → 이 앱 계산 23:41 도착",
+    c.eq("⑥ 이름과 설명", [("따릉이", ()), ("140·470번 · 지하철2호선강남역 승차", ("기존 길찾기 앱 안내 23:32 도착 → 이 앱 계산 23:41 도착 (9분 늦음)",
                                                                    "기존 앱이 타라는 140번(23:25 출발)은 놓치기 쉽습니다.")),
                         ("140·470번 · 신분당선강남역 승차", ()), ("지하철 2호선 → 지하철 3호선", ()), ("도보", ())],
          [(row.common + row.tail, row.notes) for row in rows_60])
@@ -10657,7 +10682,7 @@ def _ui32(c: _Checker, folder: Path, maps: _MapCalls) -> None:
     s = _Screen(c, maps, view=None, scenario="A").run("간단히 보기, 시나리오 기본 질의 (⑦)")
     c.eq("⑦ A 답 카드", [easy_answer_html(exp_a, a)], s.htmls("mr-answer"))
     c.true("⑦ A 지금 할 일", "지금 할 일: 삼성역 2호선 승강장에서 내리기 (19:21 도착)" in s.html_text("mr-answer"), s.html_text("mr-answer"))
-    c.eq("⑦ A 기존 앱 1위 줄의 설명", ("기존 길찾기 앱 안내 19:29 도착 → 이 앱 계산 19:34 도착",
+    c.eq("⑦ A 기존 앱 1위 줄의 설명", ("기존 길찾기 앱 안내 19:29 도착 → 이 앱 계산 19:34 도착 (5분 늦음)",
                                  "기존 앱이 타라는 146번(19:24 출발)은 놓치기 쉽습니다."),
          next((r.notes for r in compare_rows(exp_a, a) if r.naive), None))
     _no_banned(c, "⑦", s)
@@ -10783,14 +10808,14 @@ def _ui30(c: _Checker, folder: Path, maps: _MapCalls) -> None:
     c.eq("④ 레이어 선택 창 없음, 확대 단추 꺼짐", (False, False),
          (any(isinstance(child, folium.LayerControl) for child in fmap._children.values()), fmap.options.get("zoom_control")))
     c.true("④ 휴대폰 끌기 스크립트", "L.Browser.mobile" in fmap.get_root().render())
-    c.eq("④ 알약과 자리, 번호 표지 (19단계)", ([("출발", "left"), ("도착", "right")], ["2"]), (_simple_labels(fmap), _simple_badges(fmap)))
+    c.eq("④ 알약과 자리, 번호 표지 (19단계, 33단계부터 노선 이름)", ([("출발", "left"), ("도착", "right")], ["2 따릉이"]), (_simple_labels(fmap), _simple_badges(fmap)))
     c.eq("④ 맞춤 여백", [((57, 36), (57, 60))], _fit_padding(fmap))
     expected_a = ce.run_engine(a, a.default_query, config)
     names_a = {node.id: node.name for node in a.nodes}
     first_alight = _best_of(expected_a).rides[0].alight_node_id
     map_a = build_simple_map(a, expected_a, expected_a.comparison.best_id)
     c.eq("④ A: 알약은 출발·도착, 첫 하차(삼성역 2호선 승강장, 출발 자리)에는 번호가 없고 따릉이 타기에 3",
-         (["출발", "도착"], ["3"], "삼성역 2호선 승강장"), ([text for text, _ in _simple_labels(map_a)], _simple_badges(map_a), names_a[first_alight]))
+         (["출발", "도착"], ["3 따릉이"], "삼성역 2호선 승강장"), ([text for text, _ in _simple_labels(map_a)], _simple_badges(map_a), names_a[first_alight]))
     waiting = build_simple_map(golden, None, None, pick=("ORIGIN", (37.5, 127.0, "x"), None))
     c.eq("④ 찍기를 기다리는 지도: 레이어", ["출발·도착"], list(feature_groups(waiting)))
     c.true("④ 찍기를 기다리는 지도: 십자 커서", "cursor: crosshair" in waiting.get_root().render())
