@@ -665,7 +665,7 @@ RUN_NAMES: Mapping[SearchRun, str] = {
     SearchRun.SLOW: "느린 걸음 기준", SearchRun.AVERSE: "신호 피하기", SearchRun.NAIVE: "기존 앱 방식",
 }
 WAIT_RULE_NAMES: Mapping[WaitRule, str] = {WaitRule.EXPECTED: "평균 대기", WaitRule.WORST: "가장 긴 대기", WaitRule.NONE: "신호 무시"}
-GRADE_NAMES: Mapping[Grade, str] = {Grade.SAFE: "안전", Grade.RISKY: "주의", Grade.GHOST: "유령"}
+GRADE_NAMES: Mapping[Grade, str] = {Grade.SAFE: "안전", Grade.RISKY: "주의", Grade.GHOST: "놓치기 쉬움"}
 # 간단히 보기의 등급 말(32단계): 갈아탈 차를 탈 수 있는지를 소비자 말로
 EASY_GRADE_NAMES: Mapping[Grade, str] = {Grade.SAFE: "여유 있음", Grade.RISKY: "빠듯함", Grade.GHOST: "놓치기 쉬움"}
 STATUS_NAMES: Mapping[RouteStatus, str] = {RouteStatus.RANKED: "순위", RouteStatus.GHOST_PRUNED: "걸러짐"}
@@ -792,7 +792,7 @@ def node_names(scenario: Scenario | None) -> dict[str, str]:
     return names
 
 
-EARLIER_OK_TEXT = "더 일찍 닿으면 앞차를 타도 됩니다."  # 유령 환승 줄 끝(§6.9, 21단계)
+EARLIER_OK_TEXT = "더 일찍 닿으면 앞차를 타도 됩니다."  # 놓치기 쉬운 환승 줄 끝(§6.9, 21단계)
 EASY_STOP_SUFFIX = " 정류장"  # 간단히 보기의 버스 정류장 이름 뒤(§6.9, 20단계)
 
 
@@ -911,7 +911,7 @@ def _naive_card(output: EngineOutput) -> str:
     else:
         badges.append(grade_badge(naive.grade))
     if naive.ghost_count:
-        badges.append(badge_html(f"유령 환승 {naive.ghost_count}", "ghost", "✕"))
+        badges.append(badge_html(f"놓치기 쉬운 환승 {naive.ghost_count}", "ghost", "✕"))
     c0 = output.clock_s
     promised = "약속 없음(탈 차량 없음)" if cmp.naive_promised_s is None else fmt_clock(c0, cmp.naive_promised_s)
     rows = (
@@ -968,7 +968,7 @@ def compare_panel_html(output: EngineOutput, config: EngineConfig, scenario: Sce
 
 
 def _first_ghost(it: ItineraryResult, scenario: Scenario | None) -> tuple[str, float, str | None] | None:
-    """첫 유령 환승의 (탑승 노선 이름, 기존 앱 차량의 탈 확률, 안내 차량의 몇 번째 차). 몇 번째 차는 `nth_vehicle` 의 글이다."""
+    """첫 놓치기 쉬운 환승의 (탑승 노선 이름, 기존 앱 차량의 탈 확률, 안내 차량의 몇 번째 차). 몇 번째 차는 `nth_vehicle` 의 글이다."""
     rides = {ride.index: ride for ride in it.rides}
     for boarding in it.boardings:
         if not boarding.ghost or boarding.p_catch_naive is None:
@@ -1143,7 +1143,7 @@ def route_caption(it: ItineraryResult, output: EngineOutput) -> str:
     if it.itinerary_id == output.comparison.naive_best_id:
         parts.append("기존 앱 1위")
     if it.ghost_count:
-        parts.append(f"유령 환승 {it.ghost_count}")
+        parts.append(f"놓치기 쉬운 환승 {it.ghost_count}")
     if it.status == RouteStatus.GHOST_PRUNED:
         parts.extend(REASON_NAMES[reason] for reason in it.reasons)
     if output.query.deadline_s is not None:
@@ -1312,7 +1312,7 @@ def _ride_step(ride, boarding, names: Mapping[str, str], c0: float, scenario: Sc
     if ghost and boarding.p_catch_naive is not None:
         naive = _vehicle(boarding, boarding.naive_trip_id)
         which = f"{nth_vehicle(ride, naive, scenario)}를" if naive is not None else "다른 차를"
-        subs.append(f"기존 앱은 {which} 안내하지만 탈 확률이 {fmt_pct(boarding.p_catch_naive)}입니다(유령 환승).")
+        subs.append(f"기존 앱은 {which} 안내하지만 탈 확률이 {fmt_pct(boarding.p_catch_naive)}입니다(놓치기 쉬운 환승).")
     if boarding is not None and ride.plan_trip_id is not None and ride.plan_trip_id != boarding.guided_trip_id:
         plan = _vehicle(boarding, ride.plan_trip_id)
         if plan is not None:
@@ -1321,14 +1321,14 @@ def _ride_step(ride, boarding, names: Mapping[str, str], c0: float, scenario: Sc
 
 
 def guide_lines(itinerary: ItineraryResult, output: EngineOutput, scenario: Scenario | None, config: EngineConfig) -> tuple[str, ...]:
-    """여정 안내의 문장. 단계마다 한 항목이고 둘째 줄(유령 환승, 평소 속도의 차)은 줄바꿈으로 잇는다."""
+    """여정 안내의 문장. 단계마다 한 항목이고 둘째 줄(놓치기 쉬운 환승, 평소 속도의 차)은 줄바꿈으로 잇는다."""
     return tuple("\n".join((step.main, *step.subs)) for step in guide_steps(itinerary, output, scenario, config))
 
 
 def guide_html(itinerary: ItineraryResult, output: EngineOutput, scenario: Scenario | None, config: EngineConfig) -> str:
     items = []
     for number, step in enumerate(guide_steps(itinerary, output, scenario, config), start=1):
-        badge = badge_html("유령 환승", "ghost", "✕") + " " if step.ghost else ""
+        badge = badge_html("놓치기 쉬운 환승", "ghost", "✕") + " " if step.ghost else ""
         label = "" if step.kind == "arrive" else str(number)
         subs = "".join(f'<div class="mr-sub">{esc(sub)}</div>' for sub in step.subs)
         items.append(f'<li><span class="mr-n {step.kind}">{label}</span><div><div class="mr-main">{badge}{esc(step.main)}</div>'
@@ -1716,7 +1716,7 @@ def _leave_lines(leave: str) -> str:
 
 
 def _ghost_boarding(it: ItineraryResult):
-    """첫 유령 환승의 (탑승, 평가). 없으면 None."""
+    """첫 놓치기 쉬운 환승의 (탑승, 평가). 없으면 None."""
     rides = {ride.index: ride for ride in it.rides}
     for boarding in it.boardings:
         if boarding.ghost and boarding.p_catch_naive is not None and boarding.ride_index in rides:
@@ -2173,7 +2173,7 @@ def legend_html(tokens: Mapping[str, str], *, kakao: bool = False) -> str:
         (_dot_swatch("#ffffff", stroke=t["bike"], text="0", text_color=t["bike"], size=14), "대여소(자전거 없음)"),
         (_dot_swatch("#ffffff", stroke=t["bike"], dashed=True, text="1", text_color=t["bike"], size=14), "대여소(남을 확률 낮음)"),
         (_dot_swatch(t["ink"], size=12), "출발·도착"),
-        (_dot_swatch(t["ghost"], text="✕", size=14), "유령 환승 표지"),
+        (_dot_swatch(t["ghost"], text="✕", size=14), "놓치기 쉬운 환승 표지"),
         (_dot_swatch("#ffffff", stroke=t["ink2"], text="1", text_color=t["ink"], size=14), "탐색 라운드(숫자)"),
     ]
     return '<div class="mr-legend">' + "".join(f'<span class="mr-li">{swatch}{esc(text)}</span>' for swatch, text in entries) + "</div>"
@@ -4365,7 +4365,7 @@ def build_map(scenario: Scenario, output: EngineOutput | None, selected_id: str 
             ride = rides.get(boarding.ride_index)
             if boarding.ghost and ride is not None and ride.board_node_id and coords(ride.board_node_id):
                 _marker(group, coords(ride.board_node_id), _icon(_circle_html(18, t["ghost"], "#ffffff", text="✕"), (18, 18), (9, 9)),
-                        tooltip=esc(f"유령 환승: {ride_name(ride)} 기존 앱 차량을 탈 확률 "
+                        tooltip=esc(f"놓치기 쉬운 환승: {ride_name(ride)} 기존 앱 차량을 탈 확률 "
                                     f"{fmt_pct(boarding.p_catch_naive or 0.0)}"), z=400)
 
     ends = folium.FeatureGroup(name="출발·도착", show=True)
@@ -5370,7 +5370,7 @@ def render_compare_tab(p: Prepared, output: EngineOutput, selected: ItineraryRes
             "요금": fmt_won(it.fare.total_krw),
             "탑승 수": len(it.rides),
             "걷는 거리": fmt_dist(it.walk_distance_m),
-            "유령 환승 수": it.ghost_count,
+            "놓치기 쉬운 환승 수": it.ghost_count,
             "상태": STATUS_NAMES[RouteStatus.RANKED] if it.status == RouteStatus.RANKED else
             " · ".join((STATUS_NAMES[RouteStatus.GHOST_PRUNED], *(REASON_NAMES[reason] for reason in it.reasons))),
         }
@@ -5388,7 +5388,7 @@ def render_compare_tab(p: Prepared, output: EngineOutput, selected: ItineraryRes
         columns["마감 확률"] = _text_col("마감 확률", right=True)
     columns.update({
         "계획대로 갈 확률": _text_col("계획대로 갈 확률", right=True), "등급": _text_col("등급"), "요금": _text_col("요금", right=True),
-        "탑승 수": _int_col("탑승 수"), "걷는 거리": _text_col("걷는 거리", right=True), "유령 환승 수": _int_col("유령 환승 수"),
+        "탑승 수": _int_col("탑승 수"), "걷는 거리": _text_col("걷는 거리", right=True), "놓치기 쉬운 환승 수": _int_col("놓치기 쉬운 환승 수"),
         "상태": _text_col("상태"),
     })
     if utility:
@@ -5556,7 +5556,7 @@ def verdict_lines(ride, boarding, output: EngineOutput, scenario: Scenario | Non
         p_naive = boarding.p_catch_naive if boarding.p_catch_naive is not None else 0.0
         subject = "" if ride.bundle and naive is not None else f"{ride_name(ride)} "
         text = (f"기존 앱: {subject}{naive_text}를 탈 수 있다고 안내 → 실제로 탈 확률 {fmt_pct(p_naive)} "
-                f"(유령 환승, 기준 {threshold}).")
+                f"(놓치기 쉬운 환승, 기준 {threshold}).")
         if boarding.guided_found and guided is not None:
             text += (f" 이 앱의 안내: {nth_vehicle(ride, guided, scenario)}({fmt_dur(guided.dep_s)} 뒤 출발, "
                      f"탈 확률 {fmt_pct(guided.p_catch)}).")
@@ -5631,7 +5631,7 @@ def render_boarding_tab(p: Prepared, output: EngineOutput, it: ItineraryResult, 
             continue
         badge = ""
         if boarding.ghost:
-            badge = badge_html("유령 환승", "ghost", "✕")
+            badge = badge_html("놓치기 쉬운 환승", "ghost", "✕")
         elif boarding.naive_trip_id is not None and boarding.naive_trip_id == boarding.guided_trip_id:
             badge = chip_html("기존 앱과 같은 차")
         st.html(f'<div class="mr-bhead"><span class="mr-bt">{esc(boarding_header(ride, boarding, names))}</span>{badge}</div>')
@@ -8039,7 +8039,7 @@ def _ui03(c: _Checker, folder: Path, maps: _MapCalls) -> None:
     naive_rows, best_rows = rows(naive_html), rows(best_html)
     c.eq("골든: 왼쪽 머리글과 제목", ("기존 앱 방식의 1위", "가상1번 → 가상2번"), (part(naive_html, "mr-head"), part(naive_html, "mr-title")))
     badges = _plain(naive_html[naive_html.find("mr-badgerow"):])
-    c.true("골든: 왼쪽 배지 '안전', '유령 환승 1'", "안전" in badges and "유령 환승 1" in badges, badges)
+    c.true("골든: 왼쪽 배지 '안전', '놓치기 쉬운 환승 1'", "안전" in badges and "놓치기 쉬운 환승 1" in badges, badges)
     c.true("골든: 왼쪽 줄 1 '약속 도착 08:10:42'", len(naive_rows) == 3 and "약속 도착 08:10:42" in naive_rows[0], naive_rows)
     c.true("골든: 왼쪽 줄 2 '08:21:58', '08:22:02'", len(naive_rows) == 3 and "08:21:58" in naive_rows[1] and "08:22:02" in naive_rows[1],
            naive_rows)
@@ -8057,7 +8057,7 @@ def _ui03(c: _Checker, folder: Path, maps: _MapCalls) -> None:
     naive_id = out.comparison.naive_best_id
     ghost_same = out.model_copy(update={"best_id": naive_id,
                                         "comparison": out.comparison.model_copy(update={"best_id": naive_id, "same": True})})
-    c.eq("같은 여정에 유령 환승",
+    c.eq("같은 여정에 놓치기 쉬운 환승",
          ("기존 앱 방식의 1위와 이 앱의 추천이 같은 경로입니다.",
           "다만 기존 앱이 안내하는 가상2번 차량은 탈 확률이 1.3%라, 이 앱은 2번째 차를 안내합니다."),
          conclusion_lines(ghost_same, config))
@@ -8194,7 +8194,7 @@ def _ui06(c: _Checker, folder: Path, maps: _MapCalls) -> None:
     order = list(out.ranking)
     for itinerary_id, text in (
         ("Ic5c1b22780", "평균 08:11:14 · 90% 08:21:41 · 확률 87.5% 안전 · 1,000원 · 걷기 120 m"),
-        ("Ifbf4ec4c04", "평균 08:21:58 · 90% 08:22:02 · 확률 95.2% 안전 · 1,500원 · 걷기 310 m · 기존 앱 1위 · 유령 환승 1"),
+        ("Ifbf4ec4c04", "평균 08:21:58 · 90% 08:22:02 · 확률 95.2% 안전 · 1,500원 · 걷기 310 m · 기존 앱 1위 · 놓치기 쉬운 환승 1"),
         ("If1e99436b8", "평균 08:22:00 · 90% 08:25:13 · 확률 100.0% 안전 · 0원 · 걷기 1.60 km"),
     ):
         index = order.index(itinerary_id) if itinerary_id in order else -1
@@ -8221,7 +8221,7 @@ def _ui06(c: _Checker, folder: Path, maps: _MapCalls) -> None:
                    "가상1번 1번째 차 · 정류장1 08:03:20 → 정류장2 08:05:50 · 탈 확률 95.2% · 1분 04초 기다림",
                    "걷기 60 m · 1분 22초 → 정류장4 (신호 1개, 대기 34초)",
                    "가상2번 2번째 차 · 정류장4 08:17:00 → 정류장5 08:20:00 · 탈 확률 95.2% · 9분 48초 기다림\n"
-                   "기존 앱은 1번째 차를 안내하지만 탈 확률이 1.3%입니다(유령 환승).",
+                   "기존 앱은 1번째 차를 안내하지만 탈 확률이 1.3%입니다(놓치기 쉬운 환승).",
                    "걷기 80 m · 1분 53초 → 도착지 (신호 1개, 대기 49초)",
                    "도착 도착지 · 평균 08:21:58, 90% 08:22:02")
     c.eq("여정 안내 (Ifbf4ec4c04)", naive_lines, guide_lines(items["Ifbf4ec4c04"], out, golden, config))
@@ -9186,7 +9186,7 @@ def _ui15(c: _Checker, folder: Path, maps: _MapCalls) -> None:
     heads = [_plain(value) for value in tab.htmls("mr-bhead")]
     c.true("① 머리글과 배지",
            len(heads) == 2 and heads[0].startswith("탑승 1: 가상1번 · 정류장1 승차 → 정류장2 하차") and "기존 앱과 같은 차" in heads[0]
-           and heads[1].startswith("탑승 2: 가상2번 · 정류장4 승차 → 정류장5 하차") and "유령 환승" in heads[1], heads)
+           and heads[1].startswith("탑승 2: 가상2번 · 정류장4 승차 → 정류장5 하차") and "놓치기 쉬운 환승" in heads[1], heads)
     columns = ("표시", "몇 번째 차", "차량", "출발 시각", "하차 시각", "시각 출처", "만차", "막차", "탈 확률")
     c.eq("② 탑승 1 차량 표", [("★◆", "1번째 차", "차량 g1a", "08:03:20", "08:05:50", "도착 예측", "아니오", "아니오", 0.95221),
                             ("", "2번째 차", "차량 g1b", "08:13:20", "08:15:50", "도착 예측", "아니오", "아니오", 1.0)],
@@ -9198,7 +9198,7 @@ def _ui15(c: _Checker, folder: Path, maps: _MapCalls) -> None:
     kind = tab.column_types("표시").get("탈 확률", {})
     c.eq("② 탈 확률 열은 ProgressColumn (0 ~ 1)", ("progress", 0.0, 1.0), (kind.get("type"), kind.get("min_value"), kind.get("max_value")))
     verdicts = [_paragraphs(value) for value in tab.htmls("mr-verdict")]
-    c.eq("③ 판정 문장 (탑승 2)", ["기존 앱: 가상2번 1번째 차(지금부터 7분 00초 뒤 출발)를 탈 수 있다고 안내 → 실제로 탈 확률 1.3% (유령 환승, 기준 40.0%). "
+    c.eq("③ 판정 문장 (탑승 2)", ["기존 앱: 가상2번 1번째 차(지금부터 7분 00초 뒤 출발)를 탈 수 있다고 안내 → 실제로 탈 확률 1.3% (놓치기 쉬운 환승, 기준 40.0%). "
                                 "이 앱의 안내: 2번째 차(17분 00초 뒤 출발, 탈 확률 95.2%).",
                                 "이 앱은 앞 탑승까지 함께 따져 2번째 차를 안내합니다.",
                                 "기존 앱 방식으로는 08:06:38에 정류장에 닿아 22초 여유가 있다고 봅니다."], verdicts[1] if len(verdicts) > 1 else None)
@@ -9547,7 +9547,7 @@ def _ui23(c: _Checker, folder: Path, maps: _MapCalls) -> None:
     # ① 비교 패널
     panel = (s.htmls("mr-compare") or [""])[0]
     naive_card = panel[panel.find('class="mr-card naive'):panel.find('class="mr-card app')]
-    c.true("① 비교 패널 왼쪽에 '유령 환승' 배지", "유령 환승" in _plain(naive_card), _plain(naive_card))
+    c.true("① 비교 패널 왼쪽에 '놓치기 쉬운 환승' 배지", "놓치기 쉬운 환승" in _plain(naive_card), _plain(naive_card))
     naive = items[out.comparison.naive_best_id]
     promised = _clock_text(b.clock_s, naive.naive_promised_s)
     conclusion = _plain(panel[panel.find('class="mr-conclusion"'):])
@@ -9559,7 +9559,7 @@ def _ui23(c: _Checker, folder: Path, maps: _MapCalls) -> None:
     tables = [frame for frame in tab.frames() if "표시" in frame.columns]
     with_tables = [boarding for boarding in naive.boardings if boarding.vehicles]
     pairs = [(boarding, frame) for boarding, frame in zip(with_tables, tables) if boarding.ghost]
-    c.true("② 기존 방식 1위에 유령 환승인 탑승이 있다", bool(pairs), [boarding.ghost for boarding in naive.boardings])
+    c.true("② 기존 방식 1위에 놓치기 쉬운 환승인 탑승이 있다", bool(pairs), [boarding.ghost for boarding in naive.boardings])
     for boarding, frame in pairs:
         marks = [str(mark) for mark in frame["표시"]]
         label = f"② 탑승 {boarding.ride_index}"
@@ -9581,7 +9581,7 @@ def _ui23(c: _Checker, folder: Path, maps: _MapCalls) -> None:
         c.eq("② 막대그래프 데이터 행 수 = 칸 수", len(ghost.histogram.bins), len(chart.data) if chart is not None else None)
     guided = next((it for it in out.itineraries if any(boarding.ghost and boarding.guided_found and boarding.guided_trip_id != boarding.naive_trip_id
                                                        for boarding in it.boardings)), None)
-    c.true("② 안내 차량을 정한 유령 환승 탑승이 있는 여정이 있다", guided is not None)
+    c.true("② 안내 차량을 정한 놓치기 쉬운 환승 탑승이 있는 여정이 있다", guided is not None)
     if guided is not None:
         _select(s, guided.itinerary_id, out)
         index = next(i for i, boarding in enumerate(boarding for boarding in guided.boardings if boarding.vehicles)

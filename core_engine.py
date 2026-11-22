@@ -5855,7 +5855,7 @@ def _scenario_a() -> Scenario:
         examples=(
             ExampleTrip(name="선릉역 → 청담: 지하철 두 번 + 따릉이", origin_node_id="SL_X1", destination_node_id="D",
                         note="2호선에서 9호선으로 갈아타고 따릉이로 마무리하는 경로가 나옵니다."),
-            ExampleTrip(name="청담 → 종합운동장: 기존 앱의 유령 환승", origin_node_id="ST23188", destination_node_id="JS_X1",
+            ExampleTrip(name="청담 → 종합운동장: 기존 앱 1위의 놓치기 쉬운 환승", origin_node_id="ST23188", destination_node_id="JS_X1",
                         note="기존 길찾기 방식의 1위가 탈 수 없는 열차를 안내하는 경로입니다."),
         ),
         map_center=frame.latlon(600.0, -20.0),
