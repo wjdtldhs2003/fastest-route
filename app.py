@@ -215,7 +215,7 @@ TRIP_SIDEBAR_NOTE = "출발과 목적지, 도착해야 하는 시각은 본문�
 NAIVE_EASY_NOTE = ("기존 길찾기 방식은 신호를 기다리지 않고 보통 걸음으로 가장 짧은 길을 걸어, "
                    "정류장에 닿는 순간 떠나는 차도 탈 수 있다고 보고 계산합니다.")
 NO_PLAN_EASY_TEXT = "계획대로 갈 수 있는 경로가 없습니다. 자세히 보기에서 걸러진 경로와 사유를 볼 수 있습니다."
-WARNINGS_EASY_TEXT = "계산 경고 {n}건은 자세히 보기에서 볼 수 있습니다."
+WARNINGS_EASY_TEXT = "자료 참고 사항 {n}건(좌표·역 사이 거리 확인 등)은 자세히 보기에서 볼 수 있습니다."
 SIMPLE_MAP_HEIGHT_PX = 380  # 간단히 보기 지도 높이
 SIMPLE_ALT_MAX = 3  # "다른 경로"의 최대 수
 WALK_EASY_LABEL = "내 걸음 빠르기"  # 간단히 보기의 걷는 속도(22단계, 답 카드 바로 아래)
@@ -3256,12 +3256,16 @@ def sidebar_replay(ctx: DataContext) -> int:
     low, high = (min(dates), max(dates)) if dates else (None, None)
     if values:
         restore(state, "replay_window", values[0])
-        if state.get("replay_window") not in values:
+        if state.get("replay_window") == WINDOW_FREE:
+            # 장면 시각이 이름 붙은 수집 시간대 밖이면(금 23:36 처럼) 엉뚱한 구간 대신 "직접 고른 날짜·시각" 을 보인다(37단계)
+            values = [*values, WINDOW_FREE]
+            labels = {**labels, WINDOW_FREE: WINDOW_FREE_LABEL}
+        elif state.get("replay_window") not in values:
             store_value(state, "replay_window", values[0])
         st.selectbox("기록 구간", values, key="replay_window", format_func=labels.get, on_change=_on_window_change,
                      kwargs={"info": info})
         sync_keep(state, "replay_window")
-        default_day, default_clock = info[state["replay_window"]]
+        default_day, default_clock = info.get(state["replay_window"], info[values[0]])
     else:
         last = max((float(item["last_unix"]) for item in summary.get("sources", [])), default=time.time())
         moment = datetime.datetime.fromtimestamp(last, KST)
@@ -6612,17 +6616,22 @@ def scene_choices(ctx: DataContext) -> tuple[DemoScene, ...]:
                  if scene.scenario_id in ids and scene.moment.date().isoformat() in dates)
 
 
+WINDOW_FREE = "free"
+WINDOW_FREE_LABEL = "직접 고른 날짜·시각"
+
+
 def scene_window(summary: Mapping[str, Any] | None, moment: datetime.datetime) -> str | None:
-    """장면 시각이 든 기록 구간의 선택지 값(§6.11, 36단계). 첫 조회 ~ 마지막 조회 안에 드는 구간, 없으면 같은 날짜의 첫 구간, 없으면 None."""
+    """장면 시각이 든 기록 구간의 선택지 값(§6.11, 36·37단계). 첫 조회 ~ 마지막 조회 안에 드는 구간, 없으면 `WINDOW_FREE`
+    (수집기가 이름 붙은 시간대 밖에서 모은 기록, 예: 금 23:36), 기록 구간 목록 자체가 없으면 None."""
     windows = list((summary or {}).get("windows", []))
+    if not windows:
+        return None
     t = moment.timestamp()
     inside = [item for item in windows if float(item["first_unix"]) <= t <= float(item["last_unix"])]
-    same_day = [item for item in windows if item["date"] == moment.date().isoformat()]
-    for group in (inside, same_day):
-        if group:
-            item = min(group, key=lambda w: (float(w["first_unix"]), w["window"]))
-            return f"{item['date']}|{item['window']}"
-    return None
+    if not inside:
+        return WINDOW_FREE
+    item = min(inside, key=lambda w: (float(w["first_unix"]), w["window"]))
+    return f"{item['date']}|{item['window']}"
 
 
 def scene_apply(state: MutableMapping[str, Any], scene: DemoScene, summary: Mapping[str, Any] | None = None) -> None:
@@ -6665,8 +6674,8 @@ INTRO_STATS: tuple[tuple[str, str, str], ...] = (
      "토 11:40 강남역 → 신사역. 논현역에서 갈아탈 140번을 놓침. 이 앱의 추천은 11:53 도착"),
     ("94%", "이 앱이 탈 확률 80% 이상이라 계산한 환승을 실제로 탄 비율",
      "실측 추적 3,000회 중 2,392건, 금 20:35~자정"),
-    ("24번", "카카오맵 1위 길을 같은 분의 실제 기록으로 따라간 59번 중 안내보다 2분 넘게 늦은 횟수",
-     "일 09:00~13:30, 10분마다 카카오맵에서 조회(버스 길은 최대 10분 늦음)"),
+    ("22번", "카카오맵 1위 길을 같은 분의 실제 기록으로 따라간 45번 중 안내보다 2분 이상 늦은 횟수",
+     "일 09:00~13:30, 10분마다 카카오맵에서 조회, 수집이 끝난 뒤 도착은 뺌(버스 길은 최대 10분 늦음)"),
 )
 INTRO_FEATURES: tuple[tuple[str, str, str], ...] = (
     ("filter_alt", "놓치기 쉬운 환승을 미리 걸러요",
@@ -10647,7 +10656,7 @@ def _ui43(c: _Checker, folder: Path, maps: _MapCalls) -> None:
     page_text = " ".join(s.strings())
     c.true("① 소개 글: 제목, 대표 장면 세 줄(16:23 안내, 16:41 실제, 16:28 추천), 숫자 셋, 기능 넷, 계산 네 단계",
            all(t in page_text for t in (APP_TITLE, "16:23 도착", "16:41 도착 · 18분 늦음", "16:28 도착 · 13분 빠름", "46~57%",
-                                         "최대 21분", "94%", "59번 중 안내보다 2분 넘게", "기존 앱 1위와 나란히 비교", "확률 계산")), page_text[:400])
+                                         "최대 21분", "94%", "45번 중 안내보다 2분 이상", "기존 앱 1위와 나란히 비교", "확률 계산")), page_text[:400])
     _no_banned(c, "①", s)
     scenes = {"scenes": [{"at": "2026-11-02 08:00:00", "name": "시험 장면", "scenario": syn.id},
                          {"at": "2026-11-02 08:20:00", "name": "없는 시나리오", "scenario": "NOPE"},
@@ -10679,9 +10688,10 @@ def _ui43(c: _Checker, folder: Path, maps: _MapCalls) -> None:
         {"date": "2026-11-21", "window": "낮", "first_unix": _kst_unix(2026, 11, 21, 11, 0), "last_unix": _kst_unix(2026, 11, 21, 12, 0)},
     ]}
     at = lambda h, m, d=21: datetime.datetime(2026, 11, d, h, m, tzinfo=KST)
-    c.eq("④ scene_window: 11:40 은 낮 구간, 16:13 은 오후 구간, 구간 밖 14:00 은 그 날 첫 구간, 다른 날은 없음",
-         ("2026-11-21|낮", "2026-11-21|오후", "2026-11-21|낮", None),
-         (scene_window(two, at(11, 40)), scene_window(two, at(16, 13)), scene_window(two, at(14, 0)), scene_window(two, at(11, 40, 22))))
+    c.eq("④ scene_window: 11:40 은 낮 구간, 16:13 은 오후 구간, 구간 밖 14:00 과 다른 날은 직접 고른 시각, 구간 목록이 없으면 None",
+         ("2026-11-21|낮", "2026-11-21|오후", WINDOW_FREE, WINDOW_FREE, None),
+         (scene_window(two, at(11, 40)), scene_window(two, at(16, 13)), scene_window(two, at(14, 0)), scene_window(two, at(11, 40, 22)),
+          scene_window({"windows": []}, at(11, 40))))
     scenario, sources = _replayed(truth, syn, config, models, _kst_unix(2026, 11, 2, 8, 0))
     want = easy_answer(ce.run_engine(scenario, syn.default_query, config, sources), scenario)
     answer = s.html_text("mr-answer")
@@ -11064,7 +11074,7 @@ def _ui30(c: _Checker, folder: Path, maps: _MapCalls) -> None:
         call = maps.calls[-1] if maps.calls else {}
         c.eq("⑤ 지도 호출: 높이와 레이어", (380, {"추천 경로", "출발·도착"}), (call.get("height"), set(call.get("layers", ()))))
         c.true("⑤ 단추 '자세한 분석 보기'", s.has("button", "view_detail"))
-        c.true("⑤ 경고 안내", f"계산 경고 {len(expected_a.warnings)}건은 자세히 보기에서 볼 수 있습니다." in s.main_texts("caption"),
+        c.true("⑤ 경고 안내", WARNINGS_EASY_TEXT.format(n=len(expected_a.warnings)) in s.main_texts("caption"),
                s.main_texts("caption"))
         _no_banned(c, "⑤", s)
         trip = _trip_texts(s)
