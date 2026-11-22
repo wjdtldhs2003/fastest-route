@@ -6902,7 +6902,7 @@ def intro_css() -> str:
     return """<style>
 [data-testid="stMainBlockContainer"] { max-width: 1080px; margin-left: auto; margin-right: auto; }
 .mr-lp { word-break: keep-all; }
-.mr-lp-hero { min-height: calc(100svh - 230px); display: flex; flex-direction: column; justify-content: center; padding: 24px 0 8px; }
+.mr-lp-hero { min-height: calc(78svh - 120px); display: flex; flex-direction: column; justify-content: flex-end; padding: 24px 0 18px; }
 .mr-lp-eyebrow { font-size: 1rem; font-weight: 700; color: var(--mr-safe); margin-bottom: 18px; }
 .mr-lp-hero h1 { font-size: clamp(2.4rem, 8.5vw, 4.6rem); line-height: 1.18; font-weight: 800; letter-spacing: -0.03em; margin: 0 0 22px; padding: 0; }
 .mr-lp-lead { font-size: clamp(1.1rem, 3vw, 1.45rem); line-height: 1.55; color: var(--mr-ink2); margin: 0; }
