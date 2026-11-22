@@ -411,6 +411,7 @@ def page_css(tokens: Mapping[str, str]) -> str:
 .mr-answer .mr-anext {{ font-weight: 600; margin: 2px 0 4px 0; }}
 .mr-answer .mr-anext .mr-nb {{ white-space: nowrap; }}
 .st-key-mr_trip {{ gap: 0.5rem; }}
+.st-key-mr_scroll_js {{ display: none; }}
 @media (min-width: 641px) {{ .st-key-mr_side_map {{ position: sticky; top: 3.75rem; z-index: 2; }} }}
 .mr-backup {{ margin-top: 4px; padding: 4px 0 4px 10px; border-left: 3px solid var(--mr-border); font-size: 0.85rem; line-height: 1.5; }}
 .mr-backup .mr-nb {{ white-space: nowrap; }}
@@ -6889,9 +6890,9 @@ def current_page(state: MutableMapping[str, Any]) -> str:
 
 
 SCREEN_KEY = "mr_screen"
-SCROLL_TOP_JS = ("<script>(function(){var n=0;function up(){var ds=[document];try{if(window.parent!==window){ds.push(window.parent.document);}}catch(e){}"
-                 "ds.forEach(function(d){var m=d.querySelector('[data-testid=\"stMain\"]');if(m){m.scrollTop=0;}});"
-                 "window.scrollTo(0,0);if(++n<6){setTimeout(up,120);}}up();})();</script>")
+SCROLL_TOP_JS = ("<script>(function(){var n=0;function up(){[window.parent,window.parent.parent].forEach(function(w){"
+                 "try{var m=w.document.querySelector('[data-testid=\"stMain\"]');if(m){m.scrollTop=0;}}catch(e){}});"
+                 "if(++n<8){setTimeout(up,150);}}up();})();</script>")
 
 
 def scroll_top_if_moved(state: MutableMapping[str, Any], page: str) -> None:
@@ -6901,7 +6902,9 @@ def scroll_top_if_moved(state: MutableMapping[str, Any], page: str) -> None:
     before = state.get(SCREEN_KEY)
     state[SCREEN_KEY] = screen
     if before is not None and before != screen:
-        st.html(SCROLL_TOP_JS, unsafe_allow_javascript=True)
+        # st.html 의 스크립트는 실행되지 않아(브라우저에서 확인) 숨긴 st.iframe(같은 출처)에서 바깥 문서를 올린다
+        with st.container(key="mr_scroll_js"):
+            st.iframe(SCROLL_TOP_JS, height=1)
 
 
 def _go_app() -> None:
@@ -10872,7 +10875,7 @@ def _ui43(c: _Checker, folder: Path, maps: _MapCalls) -> None:
     c.eq("④ 장면을 누르면: 길찾기 화면, 시나리오, 기록 재생, 날짜와 시각, 출발 늦추기 0", (PAGE_APP, want_state),
          (s.state(PAGE_KEY), got_state()))
     c.true("④ 배지 '2026-11-02(월) 08:00:00 기록 재생'", "2026-11-02(월) 08:00:00 기록 재생" in s.chips(), s.chips())
-    scroll_up = lambda: any("scrollTop=0" in item.value for item in s.at.html)
+    scroll_up = lambda: any("scrollTop=0" in str(item.proto) for item in s.at.get("iframe"))
     c.true("④ 소개에서 길찾기로 바뀌면 화면을 맨 위로 올린다(39단계 점검)", scroll_up())
     c.true("④ 기록 구간 상자도 장면 날짜의 구간(36단계)", str(s.state("replay_window")).startswith("2026-11-02|"), s.state("replay_window"))
     two = {"windows": [
