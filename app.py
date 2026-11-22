@@ -4010,7 +4010,7 @@ def render_sidebar(ctx: DataContext, trip: Any = None) -> Prepared:
                 deadline_s = sidebar_deadline(p, DEADLINE_EASY_LABEL)
         st.divider()
         # 간단히 보기는 분석용 조절을 접힘 안에 둔다(§6.9, 17단계). 접혀도 위젯은 그려지므로 값과 키는 같다.
-        with st.expander(SIDE_MORE_LABEL, key="side_more", on_change="rerun") if trip is not None else contextlib.nullcontext():
+        with st.expander(SIDE_MORE_LABEL, expanded=True, key="side_more", on_change="rerun") if trip is not None else contextlib.nullcontext():
             sidebar_rank(deadline_s)
             if trip is None:  # 간단히 보기는 답 카드 아래에 그린다(§6.9, 22단계)
                 sidebar_walk()
