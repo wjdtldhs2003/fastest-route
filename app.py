@@ -7004,7 +7004,7 @@ def render_intro(ctx: DataContext) -> None:
             f'<div class="mr-lp-vswrap">{versus_html(INTRO_VERSUS)}</div></div></div>')
     for n, (image, kicker, title, body) in enumerate(INTRO_PANELS):
         st.html(intro_panel_html(n, image, kicker, title, body))
-    st.html('<div class="mr-lp"><div class="mr-lp-sec"><div class="mr-lp-kicker">강남·삼성 일대 버스 6개 노선, 사흘간 버스 도착 약 50만 건을 직접 수집</div>'
+    st.html('<div class="mr-lp"><div class="mr-lp-sec"><div class="mr-lp-kicker">강남·삼성 일대 버스 6개 노선, 사흘간 버스 도착 약 50만 건·따릉이 약 9만 건을 직접 수집</div>'
             '<h2>실제로 모은 기록으로<br>다시 계산했어요</h2><div class="mr-lp-stats">'
             + "".join(f'<div class="mr-lp-stat"><b>{esc(big)}</b><div>{esc(what)}</div></div>' for big, what, _ in INTRO_STATS)
             + '</div><details class="mr-lp-basis"><summary>숫자를 낸 기록</summary><ul>'
