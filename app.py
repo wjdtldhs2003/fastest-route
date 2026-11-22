@@ -214,6 +214,7 @@ TRIP_EDIT_LABEL = "출발·목적지 바꾸기"
 TRIP_SIDEBAR_NOTE = "출발과 목적지, 도착해야 하는 시각은 본문의 출발·도착 상자에서 고릅니다."
 NAIVE_EASY_NOTE = ("기존 길찾기 방식은 신호를 기다리지 않고 보통 걸음으로 가장 짧은 길을 걸어, "
                    "정류장에 닿는 순간 떠나는 차도 탈 수 있다고 보고 계산합니다.")
+NAIVE_FOOT_SUMMARY = "기존 앱 1위는 어떻게 계산했나요?"
 NO_PLAN_EASY_TEXT = "계획대로 갈 수 있는 경로가 없습니다. 자세히 보기에서 걸러진 경로와 사유를 볼 수 있습니다."
 WARNINGS_EASY_TEXT = "자료 참고 사항 {n}건(좌표·역 사이 거리 확인 등)은 자세히 보기에서 볼 수 있습니다."
 SIMPLE_MAP_HEIGHT_PX = 380  # 간단히 보기 지도 높이
@@ -369,6 +370,7 @@ def page_css(tokens: Mapping[str, str]) -> str:
 .mr-cmp .mr-cmp-note {{ font-size: 0.85rem; line-height: 1.45; margin-top: 4px; word-break: keep-all; }}
 .mr-cmp .mr-cmp-note.lead {{ font-weight: 700; }}
 .mr-cmp-foot {{ font-size: 0.8rem; color: var(--mr-ink2); line-height: 1.45; margin-top: 6px; word-break: keep-all; }}
+.mr-cmp-foot summary {{ cursor: pointer; }}
 .mr-vs {{ border: 1px solid var(--mr-border); border-radius: 14px; padding: 16px 18px 14px; margin: 14px 0 8px 0; }}
 .mr-vs-h {{ font-size: 0.85rem; font-weight: 600; color: var(--mr-ink2); }}
 .mr-vs-gain {{ font-size: 1.25rem; font-weight: 700; margin: 2px 0 12px 0; word-break: keep-all; }}
@@ -409,6 +411,7 @@ def page_css(tokens: Mapping[str, str]) -> str:
 .mr-answer .mr-anext {{ font-weight: 600; margin: 2px 0 4px 0; }}
 .mr-answer .mr-anext .mr-nb {{ white-space: nowrap; }}
 .st-key-mr_trip {{ gap: 0.5rem; }}
+@media (min-width: 641px) {{ .st-key-mr_side_map {{ position: sticky; top: 3.75rem; z-index: 2; }} }}
 .mr-backup {{ margin-top: 4px; padding: 4px 0 4px 10px; border-left: 3px solid var(--mr-border); font-size: 0.85rem; line-height: 1.5; }}
 .mr-backup .mr-nb {{ white-space: nowrap; }}
 /* 꺼진 토글의 테두리(25단계): Streamlit 의 꺼진 바탕은 화면 바탕과 대비가 1.5:1 이 안 돼 "꺼짐"이 보이지 않는다. 대비 3:1 이 넘는 muted 로 테두리 */
@@ -2177,7 +2180,7 @@ def versus(output: EngineOutput, scenario: Scenario | None) -> Versus | None:
     else:
         waits = _wait_lines(naive, scenario)
         if waits:
-            why.append(f"실제 기록으로 계산하면 정류장에서 {', '.join(waits)} 기다립니다.")
+            why.append(f"정류장에서 {', '.join(waits)} 기다립니다.")
     if not any(ride.board_node_id for ride in best.rides):  # 걷기·따릉이, 이미 탄 차에서 내려 걷기
         best_why = "정류장에서 차를 기다리지 않습니다."
     elif any(ride.bundle for ride in best.rides):
@@ -3767,14 +3770,15 @@ def sidebar_walk(label: str = "걷는 속도") -> None:
     defaults = setting_defaults()
     presets = [*WALK_SPEED_PRESETS, WALK_CUSTOM]
     _required_guard(state, "walk_preset", presets, defaults["walk_preset"])
-    st.segmented_control(label, presets, key="walk_preset", required=True)
+    easy = label == WALK_EASY_LABEL
+    st.segmented_control(label, presets, key="walk_preset", required=True,  # 간단히 보기: 설명은 ? 도움말로(39단계 점검)
+                         help=WALK_EASY_CAPTION.format(v=fmt_speed(walk_speed_of(state))) if easy else None)
     if state["walk_preset"] == WALK_CUSTOM:
         low, high, step = PARAM_RANGES["v_walk_mps"]
         restore(state, "v_walk", defaults["v_walk"])
         st.slider("걷는 속도(m/s)", low, high, step=step, key="v_walk", on_change=remember, args=("v_walk",))
         sync_keep(state, "v_walk")
-    if label == WALK_EASY_LABEL:  # 간단히 보기(28단계): 확률·백분율 없이
-        st.caption(WALK_EASY_CAPTION.format(v=fmt_speed(walk_speed_of(state))))
+    if easy:  # 간단히 보기(28단계): 확률·백분율 없이
         return
     k_move = EngineConfig().k_move
     st.caption(f"보통 사람의 걷는 속도 {fmt_speed(walk_speed_of(state))} 기준으로 계획하고, 사람마다 속도가 "
@@ -6585,12 +6589,15 @@ def _on_pick(itinerary_id: str) -> None:
     store_value(st.session_state, "selected_id", itinerary_id)
 
 
+NAIVE_FOOT_HTML = (f'<details class="mr-cmp-foot"><summary>{esc(NAIVE_FOOT_SUMMARY)}</summary>{esc(NAIVE_EASY_NOTE)}</details>')
+
+
 def compare_htmls(output: EngineOutput, scenario: Scenario | None, shown_id: str | None = None) -> list[str]:
     """경로 비교 표가 그리는 HTML 차례(머리, 줄들, 기존 방식 가정 문장). 그리지 않으면 빈 목록. 검사가 화면과 맞춰 본다."""
     rows = compare_rows(output, scenario, shown_id)
     if len(rows) < 2 and not any(row.notes for row in rows):
         return []
-    foot = [f'<div class="mr-cmp-foot">{esc(NAIVE_EASY_NOTE)}</div>'] if any(row.naive for row in rows) else []
+    foot = [NAIVE_FOOT_HTML] if any(row.naive for row in rows) else []
     return [COMPARE_HEAD_HTML, *(compare_row_html(row) for row in rows), *foot]
 
 
@@ -6607,7 +6614,7 @@ def render_simple_alternatives(output: EngineOutput, scenario: Scenario, shown_i
                 st.button(BACK_TO_BEST_LABEL if row.recommended else ALT_PICK_LABEL, key=f"alt_pick_{n}", type="secondary",
                           on_click=_on_pick, args=(row.itinerary_id,))
         if any(row.naive for row in rows):
-            st.html(f'<div class="mr-cmp-foot">{esc(NAIVE_EASY_NOTE)}</div>')
+            st.html(NAIVE_FOOT_HTML)
 
 
 def fast_run(p: Prepared) -> EngineOutput | None:
@@ -6715,7 +6722,7 @@ def render_simple(p: Prepared, output: EngineOutput | None, moved: Query | None,
                 st.html(easy_steps_html(shown, output, p.display, fast))
         if not walk_drawn:
             walk_control()
-    with slots["side"]:
+    with slots["side"], st.container(key="mr_side_map"):  # 넓은 화면에서는 왼쪽을 내려 봐도 지도가 따라온다(39단계 점검)
         clicked = render_map(p, output, shown_id, tokens, simple=True)
     st.button(DETAIL_BUTTON_LABEL, key="view_detail", on_click=_on_view_detail, width="stretch")
     if output is not None and output.warnings:
@@ -6826,17 +6833,17 @@ INTRO_SCENES_NOTE = "누르면 길찾기 화면이 그 날짜와 시각의 실�
 INTRO_HERO = ("탈 수 있다던 그 버스,", "실제로는 놓칩니다.")
 INTRO_HERO_SUB = "지금 나서면 실제로 가장 빨리 도착하는 길을 찾아 드려요."
 # 대표 장면(기획안 6절 표 첫 줄): 토 16:13, 2호선 안에서 출발. 숫자는 따릉이 없이(버스·지하철만) 계산한 값이다.
-INTRO_VERSUS = Versus(
-    gain=13, late=18, start="16:13", naive_title="지하철 2호선 → 345번 → 143번", best_title="지하철 2호선 → 143·146·345번",
-    promised="16:23", naive_real="16:41", best_arrive="16:28", best_p90="",
-    promised_min=10, naive_min=28, best_min=15,
-    why=("버스 두 대가 도착 예측보다 늦게 와, 정류장에서 345번을 9분, 143번을 7분 기다렸습니다.",),
-    best_why="143·146·345번 가운데 먼저 오는 차를 탑니다.")
+INTRO_VERSUS = Versus(  # 소개의 "토 16:13" 장면 단추로 연 화면의 맞대기 카드와 같은 숫자(39단계 점검)
+    gain=15, late=18, start="16:13", naive_title="지하철 2호선 → 345번 → 143번", best_title="지하철 2호선 → 따릉이",
+    promised="16:23", naive_real="16:41", best_arrive="16:26", best_p90="16:29",
+    promised_min=10, naive_min=28, best_min=13,
+    why=("정류장에서 345번을 9분, 143번을 7분 기다립니다.",),
+    best_why="정류장에서 차를 기다리지 않습니다.")
 # (사진 파일, 작은 제목, 큰 제목 두 줄, 설명)
 INTRO_PANELS: tuple[tuple[str, str, tuple[str, str], str], ...] = (
     ("answer.jpg", "답부터", ("몇 시에 도착하는지,", "늦어도 몇 시인지"),
      "걸음, 신호, 버스 도착 오차로 환승마다 탈 확률을 계산하고, 놓쳤을 때 기다리는 시간까지 넣어 길을 고릅니다."),
-    ("versus.jpg", "기존 앱 1위와 비교", ("기존 앱이 안내한 길,", "실제로는 20분 늦었어요"),
+    ("versus.jpg", "기존 앱 1위와 비교", ("기존 앱이 안내한 길,", "실제로는 21분 늦었어요"),
      "토요일 11:40 강남역. 논현역에서 갈아탈 140번은 15초 차이라 탈 수 없었습니다. 이 앱은 처음부터 140·470번을 안내합니다."),
     ("steps.jpg", "길 안내", ("지금 할 일만,", "한 단계씩"),
      "서 있는 곳이나 이미 탄 지하철에서 출발하고, 안내 중에는 1분마다 다시 계산해 환승이 놓치기 쉬워지면 알려 드려요."),
@@ -6848,8 +6855,7 @@ INTRO_STATS: tuple[tuple[str, str, str], ...] = (
     ("22번", "카카오맵 1위 길 45번 중 안내보다 2분 이상 늦은 횟수", "일 09:00~13:30, 수집 시간 안 도착만(버스 길 최대 10분)"),
 )
 INTRO_IMAGE_DIR = _APP_DIR / "data" / "intro"
-INTRO_SOURCES = ("데이터: 서울 열린데이터광장(버스·지하철·따릉이·신호), 공공데이터포털, © OpenStreetMap 기여자(ODbL). "
-                 "개발에 생성형 AI(Claude)를 썼고, 앱 실행 중에는 부르지 않습니다.")
+INTRO_SOURCES = "데이터: 서울 열린데이터광장, 공공데이터포털, © OpenStreetMap 기여자(ODbL) · 개발에 생성형 AI(Claude) 사용"
 
 
 # 소개 페이지를 그리는 실행에서는 길찾기 위젯이 없어 Streamlit 이 그 값을 지운다. 값 위젯의 키를 자기 값으로 다시 넣어 남긴다
@@ -6880,6 +6886,22 @@ def current_page(state: MutableMapping[str, Any]) -> str:
             wanted = None
         state[PAGE_KEY] = PAGE_APP if wanted == PAGE_APP else PAGE_INTRO
     return PAGE_APP if state.get(PAGE_KEY) == PAGE_APP else PAGE_INTRO
+
+
+SCREEN_KEY = "mr_screen"
+SCROLL_TOP_JS = ("<script>(function(){var n=0;function up(){var ds=[document];try{if(window.parent!==window){ds.push(window.parent.document);}}catch(e){}"
+                 "ds.forEach(function(d){var m=d.querySelector('[data-testid=\"stMain\"]');if(m){m.scrollTop=0;}});"
+                 "window.scrollTo(0,0);if(++n<6){setTimeout(up,120);}}up();})();</script>")
+
+
+def scroll_top_if_moved(state: MutableMapping[str, Any], page: str) -> None:
+    """소개 ↔ 길찾기, 간단히 ↔ 자세히로 화면이 바뀌면 맨 위부터 보이게 한다(39단계 점검: 장면 단추를 누르면 소개를
+    내려 본 위치 그대로 결과 화면 맨 아래가 보이던 문제). 같은 화면에서 입력만 바꿀 때는 위치를 그대로 둔다."""
+    screen = page if page == PAGE_INTRO else f"{page}:{state.get('view_mode') or 'SIMPLE'}"
+    before = state.get(SCREEN_KEY)
+    state[SCREEN_KEY] = screen
+    if before is not None and before != screen:
+        st.html(SCROLL_TOP_JS, unsafe_allow_javascript=True)
 
 
 def _go_app() -> None:
@@ -6923,7 +6945,9 @@ def intro_css() -> str:
 .mr-lp-stat b { display: block; font-size: clamp(2.6rem, 8vw, 3.6rem); line-height: 1.05; font-weight: 800; letter-spacing: -0.03em;
   font-variant-numeric: tabular-nums; margin-bottom: 10px; }
 .mr-lp-stat div { font-size: 1.05rem; line-height: 1.5; font-weight: 600; }
-.mr-lp-stat small { display: block; font-size: 0.85rem; line-height: 1.45; color: var(--mr-muted); margin-top: 6px; }
+.mr-lp-basis { margin-top: 22px; font-size: 0.85rem; line-height: 1.5; color: var(--mr-muted); }
+.mr-lp-basis summary { cursor: pointer; }
+.mr-lp-basis ul { margin: 6px 0 0 0; padding-left: 18px; }
 .mr-lp-foot { font-size: 0.85rem; line-height: 1.6; color: var(--mr-muted); }
 @supports (animation-timeline: view()) {
   @keyframes mr-lp-up { from { opacity: 0; transform: translateY(48px); } to { opacity: 1; transform: none; } }
@@ -6978,9 +7002,10 @@ def render_intro(ctx: DataContext) -> None:
         st.html(intro_panel_html(n, image, kicker, title, body))
     st.html('<div class="mr-lp"><div class="mr-lp-sec"><div class="mr-lp-kicker">강남·삼성 일대 버스 6개 노선과 따릉이를 직접 수집</div>'
             '<h2>실제로 모은 기록으로<br>다시 계산했어요</h2><div class="mr-lp-stats">'
-            + "".join(f'<div class="mr-lp-stat"><b>{esc(big)}</b><div>{esc(what)}</div><small>{esc(basis)}</small></div>'
-                      for big, what, basis in INTRO_STATS)
-            + '</div></div></div>')
+            + "".join(f'<div class="mr-lp-stat"><b>{esc(big)}</b><div>{esc(what)}</div></div>' for big, what, _ in INTRO_STATS)
+            + '</div><details class="mr-lp-basis"><summary>숫자를 낸 기록</summary><ul>'
+            + "".join(f'<li><b>{esc(big)}</b> {esc(basis)}</li>' for big, _, basis in INTRO_STATS)
+            + '</ul></details></div></div>')
     choices = scene_choices(ctx)
     if choices:
         all_scenes = load_scenes(ctx.folder)
@@ -7490,7 +7515,9 @@ def main() -> None:
     ctx = load_context()
     init_session(ctx)
     state = st.session_state
-    if current_page(state) == PAGE_INTRO:  # 소개 페이지(§6.12, 34단계)
+    page = current_page(state)
+    scroll_top_if_moved(state, page)
+    if page == PAGE_INTRO:  # 소개 페이지(§6.12, 34단계)
         render_intro(ctx)
         return
     simple = state.get("view_mode") != "DETAIL"
@@ -10815,9 +10842,9 @@ def _ui43(c: _Checker, folder: Path, maps: _MapCalls) -> None:
          (intro_keys(s), s.has("button", "to_intro") or bool(s.htmls("mr-answer")), [k for k in intro_keys(s) if "scene" in k],
           s.state(PAGE_KEY)))
     page_text = " ".join(s.strings())
-    c.true("① 소개 글(39단계): 제목, 첫 화면 문장, 16:13 맞대기(안내 16:23, 실제 16:41, 추천 16:28, 13분 먼저), 화면 셋, 숫자 넷",
+    c.true("① 소개 글(39단계): 제목, 첫 화면 문장, 16:13 맞대기(안내 16:23, 실제 16:41, 추천 16:26, 15분 먼저), 화면 셋, 숫자 넷",
            all(t in page_text for t in (APP_TITLE, INTRO_HERO[0], INTRO_HERO[1], "안내 16:23", "실제 16:41 도착", "안내보다 18분 늦음",
-                                         "16:28 도착", "13분", "46~57%", "최대 21분", "94%", "45번 중 안내보다 2분 이상",
+                                         "16:26 도착", "15분", "46~57%", "최대 21분", "94%", "45번 중 안내보다 2분 이상",
                                          *(panel[2][0] for panel in INTRO_PANELS))), page_text[:400])
     c.eq("① 소개의 휴대폰 화면 사진 셋이 있다", [True, True, True], [bool(intro_image(panel[0])) for panel in INTRO_PANELS])
     _no_banned(c, "①", s)
@@ -10845,6 +10872,8 @@ def _ui43(c: _Checker, folder: Path, maps: _MapCalls) -> None:
     c.eq("④ 장면을 누르면: 길찾기 화면, 시나리오, 기록 재생, 날짜와 시각, 출발 늦추기 0", (PAGE_APP, want_state),
          (s.state(PAGE_KEY), got_state()))
     c.true("④ 배지 '2026-11-02(월) 08:00:00 기록 재생'", "2026-11-02(월) 08:00:00 기록 재생" in s.chips(), s.chips())
+    scroll_up = lambda: any("scrollTop=0" in item.value for item in s.at.html)
+    c.true("④ 소개에서 길찾기로 바뀌면 화면을 맨 위로 올린다(39단계 점검)", scroll_up())
     c.true("④ 기록 구간 상자도 장면 날짜의 구간(36단계)", str(s.state("replay_window")).startswith("2026-11-02|"), s.state("replay_window"))
     two = {"windows": [
         {"date": "2026-11-21", "window": "오후", "first_unix": _kst_unix(2026, 11, 21, 16, 0), "last_unix": _kst_unix(2026, 11, 21, 16, 50)},
