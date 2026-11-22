@@ -4058,6 +4058,8 @@ def render_header(p: Prepared, output: EngineOutput | None, moved: Query | None,
     if simple:
         popovers = []
     with st.container(horizontal=True, vertical_alignment="center", gap="small"):
+        if simple:  # 34단계: 소개 페이지로 돌아가기
+            st.button(INTRO_BACK, key="to_intro", type="tertiary", icon=":material/arrow_back:", on_click=_go_intro)
         render_view_switch()
         st.html(f'<div class="mr-chips">{"".join(header_chips(p, output))}</div>', width="content")
         for label, help_text, rows in popovers:
@@ -6555,12 +6557,10 @@ def render_simple(p: Prepared, output: EngineOutput | None, moved: Query | None,
 
 # --- 실제 기록 장면 (§6.11, 29단계) ---
 #
-# 데이터 폴더의 `demo_scenes.json` 이 고른 시각들(기록 일괄 재생에서 효과가 잘 드러난 실제 장면)을 간단히 보기 위쪽에 알약 단추로
-# 보인다. 누르면 그 시나리오, 기록 재생, 그 날짜와 시각으로 바꾼다. 계산은 기록 재생 그대로다(새 규칙 없음).
+# 데이터 폴더의 `demo_scenes.json` 이 고른 시각들(기록 일괄 재생에서 효과가 잘 드러난 실제 장면)을 소개 페이지(§6.12, 34단계)의
+# 단추로 보인다(29~33단계는 간단히 보기 위쪽의 알약). 누르면 그 시나리오, 기록 재생, 그 날짜와 시각으로 바꾼다. 계산은 기록 재생 그대로다(새 규칙 없음).
 
 DEMO_SCENES_FILE = "demo_scenes.json"
-SCENES_HEAD = "실제 기록 장면"
-SCENES_NOTE = "수집한 실제 기록으로 그 시각을 다시 계산합니다."
 
 
 @dataclasses.dataclass(frozen=True)
@@ -6620,36 +6620,195 @@ def scene_apply(state: MutableMapping[str, Any], scene: DemoScene) -> None:
     store_value(state, "replay_time", scene.moment.time().replace(tzinfo=None))
     store_value(state, "depart_offset_s", 0)
 
+# --- 소개 페이지 (§6.12, 34단계) ---
+#
+# 첫 화면은 내려 보며 읽는 소개 페이지다. 실제 기록 장면 단추는 길찾기 화면에서 빼고 여기에 둔다(실제로 쓰는 화면에는 길찾기만).
+# "길찾기 시작" 이나 장면 단추를 누르면 길찾기 화면으로 간다. 주소에 `?page=app` 이 있으면 소개를 건너뛴다.
+# 숫자와 장면 시각은 기획안 6절과 같은 값이다(실제 수집 기록 재생, `reports/` 의 근거). 새 계산은 없다.
 
-def scene_active(state: Mapping[str, Any], scene: DemoScene) -> bool:
-    replay_date, replay_time = state.get("replay_date"), state.get("replay_time")
-    return (state.get("scenario_id") == scene.scenario_id and state.get("data_mode") == DataMode.REPLAY.value
-            and isinstance(replay_date, datetime.date) and isinstance(replay_time, datetime.time)
-            and replay_unix(replay_date, replay_time) == scene.at_unix)
+PAGE_KEY = "mr_page"
+PAGE_INTRO, PAGE_APP = "intro", "app"
+INTRO_START = "길찾기 시작"
+INTRO_BACK = "소개"
+INTRO_SCENES_HEAD = "실제 기록으로 직접 보기"
+INTRO_SCENES_NOTE = "누르면 길찾기 화면이 그 날짜와 시각의 실제 수집 기록으로 열립니다."
+# 대표 장면(기획안 6절 표 첫 줄): 토 16:13, 2호선을 타고 가는 중에 출발
+INTRO_SCENE_ROWS: tuple[tuple[str, str, str, int, str], ...] = (
+    ("기존 앱 1위 안내", "16:23 도착", "muted", 10, "2호선 → 345번 → 143번"),
+    ("그대로 따라가면 실제로", "16:41 도착 · 18분 늦음", "ghost", 28, "345번을 놓쳐 다음 차를 기다림"),
+    ("이 앱의 추천", "16:28 도착 · 13분 빠름", "safe", 15, "버스·지하철만으로"),
+)
+INTRO_SCENE_SPAN_MIN = 30
+INTRO_STATS: tuple[tuple[str, str, str], ...] = (
+    ("46~57%", "기존 앱 1위가 놓치기 쉬운 환승을 끼고 있던 출발의 비율",
+     "강남역 → 신사역, 금·토 네 시간대, 1분마다 출발을 실제 기록으로 재생(신분당선 포함)"),
+    ("최대 21분", "기존 앱 1위를 따라갔을 때 안내보다 늦게 도착한 시간",
+     "토 11:40 강남역 → 신사역. 이 앱의 추천은 안내보다 1분 늦은 11:52 도착"),
+    ("94%", "이 앱이 탈 확률 80% 이상이라 계산한 환승을 실제로 탄 비율",
+     "실측 추적 3,000회 중 2,392건, 금 20:35~자정"),
+)
+INTRO_FEATURES: tuple[tuple[str, str, str], ...] = (
+    ("filter_alt", "놓치기 쉬운 환승을 미리 걸러요",
+     "걸음 차이, 신호 대기, 버스가 일찍 오는 오차로 환승마다 탈 확률을 계산합니다. 놓치면 다음 차를 기다리는 시간까지 넣어 실제로 언제 도착하는지로 길을 고릅니다."),
+    ("schedule", "몇 시 도착, 늦어도 몇 시",
+     "답 카드에 걸리는 시간과 도착 시각, 늦어도 도착하는 시각, 지금 할 일을 먼저 보여 줍니다. 여유 있음, 빠듯함, 놓치기 쉬움 세 단계로 알려 줍니다."),
+    ("compare_arrows", "기존 앱 1위와 나란히 비교",
+     "경로 비교 표에서 기존 길찾기 앱이 1위로 안내하는 경로와 이 앱의 추천을 같은 칸에 놓고, 안내 도착과 실제 계산 도착을 함께 보여 줍니다."),
+    ("directions_subway", "지금 서 있는 곳, 타고 가는 차에서",
+     "휴대폰 위치에서, 또는 이미 탄 지하철에서 출발할 수 있습니다. 안내 모드는 1분마다 다시 계산해 환승이 위험해지면 알려 줍니다."),
+)
+INTRO_STEPS: tuple[tuple[str, str], ...] = (
+    ("지금 상태", "서 있는 곳이나 타고 있는 지하철·버스에서 출발"),
+    ("조합 찾기", "내릴 곳, 수단(도보·버스·지하철·따릉이), 탈 차의 조합"),
+    ("확률 계산", "걸음 차이, 신호, 버스 도착 오차로 차마다 탈 확률과 도착 분포"),
+    ("쉬운 답", "몇 분 걸려 몇 시 도착, 지금 할 일, 기존 앱 1위와 비교"),
+)
+INTRO_SOURCES = ("데이터: 서울 열린데이터광장(버스·지하철·따릉이·신호), 공공데이터포털, © OpenStreetMap 기여자(ODbL). "
+                 "개발에 생성형 AI(Claude)를 썼고, 앱 실행 중에는 부르지 않습니다.")
 
 
-def _on_scene() -> None:
-    """장면 고르기(`scene_pick`)의 콜백: 고른 장면을 적용한다. 고른 것을 다시 눌러 비우면 아무것도 바꾸지 않는다."""
-    index = st.session_state.get("scene_pick")
+# 소개 페이지를 그리는 실행에서는 길찾기 위젯이 없어 Streamlit 이 그 값을 지운다. 값 위젯의 키를 자기 값으로 다시 넣어 남긴다
+# (단추, 접힘, 지도 같은 값을 넣을 수 없는 위젯은 넣지 않는다).
+INTRO_KEEP_KEYS: tuple[str, ...] = (
+    "scenario_id", "data_mode", "view_mode", "depart_offset_s", "origin_kind", "origin_place", "train_station", "train_key",
+    "bus_line", "bus_stop_index", "bus_vehicle", "prior_km", "dest_kind", "dest_place", "map_pick", "use_deadline",
+    "deadline_time", "selected_id", "replay_window", "replay_date", "replay_time", "use_bus", "use_subway", "use_bike",
+    "full_skip", "show_variants", "walk_preset", "v_walk", "v_pm", "weight_preset", "w_time", "w_cost", "w_risk",
+    "rank_criterion", "safety_buffer", "gamma", "max_rides", "max_bike_legs", "trace_run", "trace_line",
+)
+
+
+def keep_for_intro(state: MutableMapping[str, Any]) -> None:
+    for key in INTRO_KEEP_KEYS:
+        if key in state:
+            state[key] = state[key]
+
+
+def current_page(state: MutableMapping[str, Any]) -> str:
+    """보일 페이지(§6.12): 안내 중이거나 자세히 보기면 길찾기, 주소의 `page=app` 이면 길찾기, 아니면 상태(처음은 소개)."""
+    if isinstance(state.get("guide"), Mapping) or state.get("view_mode") == "DETAIL":
+        state[PAGE_KEY] = PAGE_APP
+    elif PAGE_KEY not in state:
+        try:
+            wanted = st.query_params.get("page")
+        except Exception:  # noqa: BLE001 - 실행 맥락 밖
+            wanted = None
+        state[PAGE_KEY] = PAGE_APP if wanted == PAGE_APP else PAGE_INTRO
+    return PAGE_APP if state.get(PAGE_KEY) == PAGE_APP else PAGE_INTRO
+
+
+def _go_app() -> None:
+    st.session_state[PAGE_KEY] = PAGE_APP
+
+
+def _go_intro() -> None:
+    st.session_state[PAGE_KEY] = PAGE_INTRO
+
+
+def _intro_scene(index: int) -> None:
+    """소개의 장면 단추: 그 장면을 적용하고 길찾기 화면으로 간다."""
     scenes = load_scenes(data_folder())
-    if isinstance(index, int) and 0 <= index < len(scenes):
+    if 0 <= index < len(scenes):
         scene_apply(st.session_state, scenes[index])
+    st.session_state[PAGE_KEY] = PAGE_APP
 
 
-def render_scenes(ctx: DataContext) -> None:
-    """간단히 보기 위쪽의 장면 단추(§6.11). 보일 장면이 없거나 안내 중이면 그리지 않는다."""
-    state = st.session_state
+def intro_css() -> str:
+    return """<style>
+[data-testid="stMainBlockContainer"] { max-width: 1040px; margin-left: auto; margin-right: auto; }
+.mr-lp-hero { padding: 0 0 8px; }
+.mr-lp-eyebrow { font-size: 0.85rem; font-weight: 600; color: var(--mr-safe); letter-spacing: 0.02em; margin-bottom: 10px; }
+.mr-lp-hero h1 { font-size: clamp(2rem, 6vw, 3.2rem); line-height: 1.2; font-weight: 800; margin: 0 0 14px; padding: 0; word-break: keep-all; }
+.mr-lp-lead { font-size: clamp(1.05rem, 2.6vw, 1.3rem); line-height: 1.6; color: var(--mr-ink2); max-width: 720px; word-break: keep-all; margin: 0; }
+.mr-lp-sec { padding: 40px 0 6px; }
+.mr-lp-kicker { font-size: 0.85rem; font-weight: 600; color: var(--mr-muted); margin-bottom: 6px; }
+.mr-lp-sec h2 { font-size: clamp(1.4rem, 3.6vw, 2rem); line-height: 1.3; font-weight: 750; margin: 0 0 10px; padding: 0; word-break: keep-all; }
+.mr-lp-p { font-size: 1rem; line-height: 1.65; color: var(--mr-ink2); max-width: 760px; word-break: keep-all; margin: 0 0 14px; }
+.mr-lp-card { border: 1px solid var(--mr-border); border-radius: 14px; padding: 20px 20px 14px; }
+.mr-lp-row { margin-bottom: 16px; }
+.mr-lp-rowhead { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; font-size: 0.95rem; margin-bottom: 6px; }
+.mr-lp-rowhead b { font-weight: 650; }
+.mr-lp-rowhead span { font-variant-numeric: tabular-nums; font-weight: 650; }
+.mr-lp-track { position: relative; height: 14px; border-radius: 7px; background: var(--mr-grid); overflow: hidden; }
+.mr-lp-fill { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 7px; }
+.mr-lp-sub { font-size: 0.85rem; color: var(--mr-muted); margin-top: 4px; }
+.mr-lp-axis { display: flex; justify-content: space-between; font-size: 0.8rem; color: var(--mr-muted); font-variant-numeric: tabular-nums; margin-top: 4px; }
+.mr-lp-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; }
+.mr-lp-stat b { display: block; font-size: clamp(2rem, 5vw, 2.6rem); line-height: 1.1; font-weight: 800; font-variant-numeric: tabular-nums; margin-bottom: 8px; }
+.mr-lp-stat div { font-size: 0.98rem; line-height: 1.5; word-break: keep-all; }
+.mr-lp-stat small { display: block; font-size: 0.82rem; line-height: 1.45; color: var(--mr-muted); margin-top: 8px; word-break: keep-all; }
+.mr-lp-feat .mr-lp-icon { font-family: 'Material Symbols Rounded'; font-weight: normal; font-style: normal; line-height: 1; font-size: 28px; color: var(--mr-safe); }
+.mr-lp-feat h3 { font-size: 1.1rem; font-weight: 700; margin: 6px 0 6px; padding: 0; word-break: keep-all; }
+.mr-lp-feat p { font-size: 0.95rem; line-height: 1.6; color: var(--mr-ink2); margin: 0 0 6px; word-break: keep-all; }
+.mr-lp-steps { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; counter-reset: mrstep; }
+.mr-lp-step { border-left: 3px solid var(--mr-safe); padding: 4px 0 4px 14px; }
+.mr-lp-step b { display: block; font-size: 1rem; margin-bottom: 4px; }
+.mr-lp-step b::before { counter-increment: mrstep; content: counter(mrstep) ". "; color: var(--mr-safe); }
+.mr-lp-step span { font-size: 0.92rem; line-height: 1.55; color: var(--mr-ink2); word-break: keep-all; }
+.mr-lp-foot { font-size: 0.85rem; line-height: 1.6; color: var(--mr-muted); word-break: keep-all; }
+.st-key-mr_intro_scenes button { width: 100%; justify-content: flex-start; text-align: left; min-height: 3rem; }
+.st-key-intro_start button, .st-key-intro_start2 button { min-height: 3rem; padding-left: 28px; padding-right: 28px; font-size: 1.05rem;
+  background: var(--mr-ink); border-color: var(--mr-ink); color: var(--mr-bg); }
+.st-key-intro_start button:hover, .st-key-intro_start2 button:hover { background: var(--mr-ink2); border-color: var(--mr-ink2); color: var(--mr-bg); }
+.st-key-intro_start button p, .st-key-intro_start2 button p, .st-key-intro_start button span, .st-key-intro_start2 button span { color: var(--mr-bg); }
+</style>"""
+
+
+def intro_scene_html() -> str:
+    rows = []
+    for name, when, color, minutes, sub in INTRO_SCENE_ROWS:
+        width = 100.0 * minutes / INTRO_SCENE_SPAN_MIN
+        rows.append(f'<div class="mr-lp-row"><div class="mr-lp-rowhead"><b>{esc(name)}</b><span>{esc(when)}</span></div>'
+                    f'<div class="mr-lp-track"><div class="mr-lp-fill" style="width:{width:.1f}%;background:var(--mr-{color})"></div></div>'
+                    f'<div class="mr-lp-sub">{esc(sub)}</div></div>')
+    return (f'<div class="mr-lp-card">{"".join(rows)}'
+            '<div class="mr-lp-axis"><span>16:13 출발</span><span>16:28</span><span>16:43</span></div></div>')
+
+
+def render_intro(ctx: DataContext) -> None:
+    """소개 페이지(§6.12): 내려 보며 읽는 한 장. 장면 단추는 기록이 있을 때만."""
+    keep_for_intro(st.session_state)
+    st.html(intro_css())
+    st.html('<div class="mr-lp"><div class="mr-lp-hero">'
+            '<div class="mr-lp-eyebrow">서울 대중교통 · 실제 수집 기록으로 확인</div>'
+            f'<h1>{esc(APP_TITLE)}</h1>'
+            '<p class="mr-lp-lead">지도 앱이 “탈 수 있다”고 한 그 차, 실제로는 놓치기 쉽습니다. '
+            '환승마다 탈 확률을 계산해 지금 출발하면 실제로 가장 빨리 도착하는 길을 찾아 줍니다.</p></div></div>')
+    st.button(INTRO_START, key="intro_start", type="primary", icon=":material/arrow_forward:", on_click=_go_app)
+    st.html('<div class="mr-lp"><div class="mr-lp-sec"><div class="mr-lp-kicker">같은 순간, 두 안내</div>'
+            '<h2>화면에서 가장 빠른 길이 실제로는 가장 늦어집니다</h2>'
+            '<p class="mr-lp-p">토요일 16:13, 2호선을 타고 가는 중에 출발한 실제 장면입니다. 기존 길찾기 방식은 보통 걸음(1.25 m/s), '
+            '신호 대기 0으로 계산해 첫 차를 “탈 수 있다”고 안내합니다. 실제로는 걸음이 느리거나 신호에 걸리고, 버스는 안내보다 일찍 옵니다. '
+            '그 차를 놓치면 다음 차를 기다려야 합니다.</p>'
+            f'{intro_scene_html()}</div>'
+            '<div class="mr-lp-sec"><div class="mr-lp-kicker">실제 기록으로 확인한 숫자</div>'
+            '<h2>강남·삼성 일대 버스 6개 노선, 따릉이, 신호를 금·토요일에 수집해 다시 계산했습니다</h2>'
+            '<div class="mr-lp-grid">'
+            + "".join(f'<div class="mr-lp-card mr-lp-stat"><b>{esc(big)}</b><div>{esc(what)}</div><small>{esc(basis)}</small></div>'
+                      for big, what, basis in INTRO_STATS)
+            + '</div></div>'
+            '<div class="mr-lp-sec"><div class="mr-lp-kicker">무엇이 다른가요</div><h2>답부터, 쉬운 말로</h2><div class="mr-lp-grid">'
+            + "".join(f'<div class="mr-lp-card mr-lp-feat"><span class="mr-lp-icon" aria-hidden="true">{icon}</span>'
+                      f'<h3>{esc(title)}</h3><p>{esc(body)}</p></div>' for icon, title, body in INTRO_FEATURES)
+            + '</div></div>'
+            '<div class="mr-lp-sec"><div class="mr-lp-kicker">어떻게 계산하나요</div><h2>네 단계로 실제 도착을 계산합니다</h2>'
+            '<div class="mr-lp-steps">'
+            + "".join(f'<div class="mr-lp-step"><b>{esc(title)}</b><span>{esc(body)}</span></div>' for title, body in INTRO_STEPS)
+            + '</div></div></div>')
     choices = scene_choices(ctx)
-    if not choices or isinstance(state.get("guide"), Mapping):
-        return
-    all_scenes = load_scenes(ctx.folder)
-    labels = {all_scenes.index(scene): scene.label for scene in choices}
-    # 고른 표시는 지금 화면이 그 장면일 때만(사이드바에서 시각을 바꾸면 풀린다). 위젯을 만들기 전에 맞춘다.
-    state["scene_pick"] = next((index for index, scene in zip(labels, choices) if scene_active(state, scene)), None)
-    with st.container(key="mr_scenes"):
-        st.pills(SCENES_HEAD, list(labels), key="scene_pick", format_func=labels.get, on_change=_on_scene)
-        st.caption(SCENES_NOTE)
-
+    if choices:
+        all_scenes = load_scenes(ctx.folder)
+        st.html(f'<div class="mr-lp"><div class="mr-lp-sec"><div class="mr-lp-kicker">직접 확인</div>'
+                f'<h2>{esc(INTRO_SCENES_HEAD)}</h2><p class="mr-lp-p">{esc(INTRO_SCENES_NOTE)}</p></div></div>')
+        with st.container(key="mr_intro_scenes"):
+            for scene in choices:
+                index = all_scenes.index(scene)
+                st.button(scene.label, key=f"intro_scene_{index}", icon=":material/play_circle:",
+                          on_click=_intro_scene, args=(index,))
+    st.html('<div class="mr-lp"><div class="mr-lp-sec"><h2>지금 출발하면, 실제로 언제 도착할까요?</h2></div></div>')
+    st.button(INTRO_START, key="intro_start2", type="primary", icon=":material/arrow_forward:", on_click=_go_app)
+    st.divider()
+    st.html(f'<div class="mr-lp-foot">{esc(INTRO_SOURCES)}</div>')
 
 # --- 안내 모드 (§6.10, 27단계) ---
 #
@@ -7145,11 +7304,13 @@ def main() -> None:
     ctx = load_context()
     init_session(ctx)
     state = st.session_state
+    if current_page(state) == PAGE_INTRO:  # 소개 페이지(§6.12, 34단계)
+        render_intro(ctx)
+        return
     simple = state.get("view_mode") != "DETAIL"
     slots: dict[str, Any] = {}
     if simple:
         slots["head"] = st.container()
-        slots["scenes"] = st.container()  # 실제 기록 장면(§6.11)
         slots["guide"] = st.container()  # 안내 카드(§6.10): 휴대폰에서도 맨 먼저 보이게 출발·도착 상자 위
         left, right = st.columns([5, 7], gap="medium")
         with left:
@@ -7177,8 +7338,6 @@ def main() -> None:
     if simple:
         with slots["head"]:
             render_header(p, output, moved, simple=True)
-        with slots["scenes"]:
-            render_scenes(ctx)
         clicked = render_simple(p, output, moved, slots, tokens)
         render_footer()
         if clicked:
@@ -7342,7 +7501,8 @@ def _plain(markup: str) -> str:
 class _Screen:
     """AppTest 한 개와 그 검사 도우미. 실행마다 화면 예외를 판정에 넣는다."""
 
-    def __init__(self, checker: _Checker, maps: _MapCalls, view: str | None = "DETAIL", scenario: str | None = None) -> None:
+    def __init__(self, checker: _Checker, maps: _MapCalls, view: str | None = "DETAIL", scenario: str | None = None,
+                 page: str | None = PAGE_APP) -> None:
         from streamlit.testing.v1 import AppTest
 
         self.c = checker
@@ -7350,6 +7510,8 @@ class _Screen:
         self.at = AppTest.from_file(str(_APP_FILE), default_timeout=60)
         if view is not None:  # UI-01 ~ UI-29 는 자세히 보기로 시작한다(§8.7). UI-30 은 None(기본값 "SIMPLE")
             self.at.session_state["view_mode"] = view
+        if page is not None:  # 34단계: 검사는 길찾기 화면에서 시작한다. 소개 페이지는 UI-43 이 page=None 으로 본다
+            self.at.session_state[PAGE_KEY] = page
         if scenario is not None:  # 첫 실행 전에 시나리오를 정해 두면 첫 화면 규칙(첫 예시 경로, §6.3 30단계)을 건너뛴다
             self.at.session_state["scenario_id"] = scenario
 
@@ -10448,10 +10610,19 @@ def _ui42(c: _Checker, folder: Path, maps: _MapCalls) -> None:
 
 
 def _ui43(c: _Checker, folder: Path, maps: _MapCalls) -> None:
-    """실제 기록 장면(§6.11 29단계, §9.9.17): 합성 기록(§9.7.4)으로 장면 단추를 그리고 눌러 본다."""
+    """소개 페이지와 실제 기록 장면(§6.11, §6.12 34단계, §9.9.17): 합성 기록(§9.7.4)으로 소개의 장면 단추를 그리고 눌러 본다."""
     truth, syn, config, models = _synthetic(folder)
-    s = _Screen(c, maps, view=None).run("간단히 보기 첫 실행, 장면 파일 없음 (UI-43)")
-    c.true("① 장면 파일이 없으면 장면 고르기 없음", not s.has("button_group", "scene_pick"), [b.key for b in s.at.button_group])
+    intro_keys = lambda screen: [b.key for b in screen.at.button if str(b.key or "").startswith("intro_")]
+    s = _Screen(c, maps, view=None, page=None).run("첫 실행, 장면 파일 없음 (UI-43)")
+    c.eq("① 첫 화면은 소개: 길찾기 시작 단추 둘, 장면 단추 없음, 출발·도착 상자와 답 카드 없음, 상태 intro",
+         (["intro_start", "intro_start2"], False, [], PAGE_INTRO),
+         (intro_keys(s), s.has("button", "to_intro") or bool(s.htmls("mr-answer")), [k for k in intro_keys(s) if "scene" in k],
+          s.state(PAGE_KEY)))
+    page_text = " ".join(s.strings())
+    c.true("① 소개 글: 제목, 대표 장면 세 줄(16:23 안내, 16:41 실제, 16:28 추천), 숫자 셋, 기능 넷, 계산 네 단계",
+           all(t in page_text for t in (APP_TITLE, "16:23 도착", "16:41 도착 · 18분 늦음", "16:28 도착 · 13분 빠름", "46~57%",
+                                         "최대 21분", "94%", "기존 앱 1위와 나란히 비교", "확률 계산")), page_text[:400])
+    _no_banned(c, "①", s)
     scenes = {"scenes": [{"at": "2026-11-02 08:00:00", "name": "시험 장면", "scenario": syn.id},
                          {"at": "2026-11-02 08:20:00", "name": "없는 시나리오", "scenario": "NOPE"},
                          {"at": "2026-12-01 08:00:00", "name": "기록 없는 날", "scenario": syn.id},
@@ -10463,40 +10634,48 @@ def _ui43(c: _Checker, folder: Path, maps: _MapCalls) -> None:
     (folder / "broken").mkdir()
     (folder / "broken" / DEMO_SCENES_FILE).write_text("{ 깨진", encoding="utf-8")
     c.eq("② 깨진 파일은 빈 튜플", (), load_scenes(folder / "broken"))
-    s = _Screen(c, maps, view=None).run("간단히 보기 첫 실행, 장면 파일 있음 (UI-43)")
-    has_pick = s.has("button_group", "scene_pick")
-    c.eq("③ 보이는 장면: 시나리오가 있고 기록 날짜 안인 것만", ["11/2(월) 08:00 시험 장면"],
-         [option.content for option in s.at.button_group(key="scene_pick").proto.options] if has_pick else None)
-    c.true("③ 라벨과 안내", has_pick and s.at.button_group(key="scene_pick").label == SCENES_HEAD and SCENES_NOTE in s.main_texts("caption"))
+    s = _Screen(c, maps, view=None, page=None).run("첫 실행, 장면 파일 있음 (UI-43)")
+    shown = [(b.key, b.label) for b in s.at.button if str(b.key or "").startswith("intro_scene_")]
+    c.eq("③ 소개의 장면 단추: 시나리오가 있고 기록 날짜 안인 것만", [("intro_scene_0", "11/2(월) 08:00 시험 장면")], shown)
+    c.true("③ 머리와 안내", INTRO_SCENES_HEAD in " ".join(s.strings()) and INTRO_SCENES_NOTE in " ".join(s.strings()))
     want_state = (syn.id, "REPLAY", datetime.date(2026, 11, 2), datetime.time(8, 0), 0)
     got_state = lambda: (s.state("scenario_id"), s.state("data_mode"), s.state("replay_date"), s.state("replay_time"),
                          s.state("depart_offset_s"))
-    c.eq("④ 첫 실행은 장면이 있어도 첫 시나리오의 첫 예시 경로(30단계): 시나리오 A, 시뮬레이션, 고른 장면 없음",
-         ("A", "SIMULATION", None), (s.state("scenario_id"), s.state("data_mode"),
-                                     s.at.button_group(key="scene_pick").value if has_pick else "없음"))
-    if has_pick:
-        s.set("button_group", "scene_pick", 0)
-    c.eq("④ 장면을 고르면: 시나리오, 기록 재생, 날짜와 시각, 출발 늦추기 0, 고른 값 0", (want_state, 0),
-         (got_state(), s.at.button_group(key="scene_pick").value if s.has("button_group", "scene_pick") else None))
+    c.eq("④ 장면을 누르기 전: 첫 시나리오(A), 시뮬레이션", ("A", "SIMULATION"), (s.state("scenario_id"), s.state("data_mode")))
+    if shown:
+        s.click("intro_scene_0")
+    c.eq("④ 장면을 누르면: 길찾기 화면, 시나리오, 기록 재생, 날짜와 시각, 출발 늦추기 0", (PAGE_APP, want_state),
+         (s.state(PAGE_KEY), got_state()))
     c.true("④ 배지 '2026-11-02(월) 08:00:00 기록 재생'", "2026-11-02(월) 08:00:00 기록 재생" in s.chips(), s.chips())
     scenario, sources = _replayed(truth, syn, config, models, _kst_unix(2026, 11, 2, 8, 0))
     want = easy_answer(ce.run_engine(scenario, syn.default_query, config, sources), scenario)
     answer = s.html_text("mr-answer")
     c.true("④ 답 카드 = 그 시각 기록 재생의 엔진 결과(제목, 시각)", want is not None and want.title in answer and want.span in answer,
            (answer, want))
+    c.true("④ 길찾기 화면에는 장면 단추가 없음(34단계)", not intro_keys(s) and not s.has("button_group", "scene_pick"),
+           [b.key for b in s.at.button])
     _no_banned(c, "④", s)
-    s.set("time_input", "replay_time", datetime.time(8, 5))
-    c.eq("⑤ 사이드바에서 시각을 바꾸면 고른 표시가 풀림", None,
-         s.at.button_group(key="scene_pick").value if s.has("button_group", "scene_pick") else "없음")
-    s.set("button_group", "scene_pick", 0)
-    c.eq("⑤ 다시 고르면 그 장면으로 돌아감", (want_state, 0),
-         (got_state(), s.at.button_group(key="scene_pick").value if s.has("button_group", "scene_pick") else None))
+    s.click("to_intro")
+    c.eq("⑤ 소개 단추: 소개로, 고른 장면 상태는 그대로", (PAGE_INTRO, want_state, True), (s.state(PAGE_KEY), got_state(),
+                                                                         s.has("button", "intro_start")))
+    s.click("intro_start")
+    c.eq("⑤ 길찾기 시작: 길찾기 화면, 장면 상태 그대로, 답 카드", (PAGE_APP, want_state, True),
+         (s.state(PAGE_KEY), got_state(), bool(s.htmls("mr-answer"))))
     if s.has("button", "guide_start"):
         s.click("guide_start")
-        c.true("⑥ 안내 중에는 장면 고르기 없음", not s.has("button_group", "scene_pick"), [b.key for b in s.at.button_group])
+        s.put(PAGE_KEY, PAGE_INTRO)
+        c.eq("⑥ 안내 중에는 소개로 가지 않음(상태가 소개여도 길찾기, 소개 단추 없음)", (PAGE_APP, False),
+             (s.state(PAGE_KEY), s.has("button", "intro_start")))
         s.click("guide_stop")
     else:
         c.true("⑥ 안내 시작 단추가 있어야 함", False, [b.key for b in s.at.button])
+    q = _Screen(c, maps, view=None, page=None)
+    q.at.query_params["page"] = "app"
+    q.run("주소 ?page=app (UI-43)")
+    c.eq("⑦ 주소에 page=app 이면 소개를 건너뜀", (PAGE_APP, False, True),
+         (q.state(PAGE_KEY), q.has("button", "intro_start"), q.has("button", "to_intro")))
+    d = _Screen(c, maps, view="DETAIL", page=None).run("자세히 보기 첫 실행 (UI-43)")
+    c.eq("⑧ 자세히 보기는 소개 없이 길찾기", (PAGE_APP, False), (d.state(PAGE_KEY), d.has("button", "intro_start")))
 
 
 def _ui38(c: _Checker, folder: Path, maps: _MapCalls) -> None:
@@ -10962,7 +11141,7 @@ _UI_CHECKS: tuple[tuple[str, str, Callable[[_Checker, Path, _MapCalls], None]], 
     ("UI-40", "출발 늦추기의 글자", _ui40),
     ("UI-41", "안내 모드", _ui41),
     ("UI-42", "확률 대신 결정", _ui42),
-    ("UI-43", "실제 기록 장면", _ui43),
+    ("UI-43", "소개 페이지와 실제 기록 장면", _ui43),
 )
 
 
