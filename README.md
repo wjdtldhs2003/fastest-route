@@ -22,7 +22,7 @@ pip install -r requirements.txt
 streamlit run app.py
 ```
 
-- Python 3.13 에서 확인했습니다. 엔진 자체 검사 `python core_engine.py --selftest` 159/159, 탐색 조합 검사 `--matrix` 144/144, 화면 검사 `python app.py --uitest` 43/43, 명세에서 따로 짠 검산 `check/run_all.py` 38/38.
+- Python 3.13 에서 확인했습니다. 엔진 자체 검사 `python core_engine.py --selftest` 160/160, 탐색 조합 검사 `--matrix` 144/144, 화면 검사 `python app.py --uitest` 43/43, 명세에서 따로 짠 검산 `check/run_all.py` 38/38.
 - 키 없이 열면 시뮬레이션 모드(실제 정류장과 노선에 설계한 도착 시각)로 돕니다. 데이터 폴더에 수집 기록이 있으면 기록 재생 모드도 쓸 수 있습니다.
 - 실시간 모드는 환경변수 `SEOUL_OPENAPI_KEY` 나 `DATA_GO_KR_SERVICE_KEY` 가 있을 때 쓸 수 있고, 카카오 도보 경로 비교는 `KAKAO_REST_API_KEY` 가 있을 때 됩니다. Streamlit Community Cloud 에서는 앱 설정의 Secrets 에 같은 이름으로 넣습니다(맨 위 수준의 값은 환경변수로도 읽힙니다). 키를 이 저장소나 주소에 넣지 마세요.
 - 데이터 폴더는 환경변수 `MOBILITY_ROUTER_DATA_DIR` 가 있으면 그 폴더, 없으면 `app.py` 옆의 `data/` 입니다.
@@ -31,13 +31,13 @@ streamlit run app.py
 ## 한계
 
 - 범위는 강남구의 두 구간(강남역에서 신사역 방향, 선릉역에서 청담역·삼성동 방향)과 그 둘레입니다.
-- 신호는 실시간 자료를 받지 못해(전국 신호 API 에 강남구 자료가 없음) 설계한 주기와 녹색 시간으로 계산합니다.
+- 강남구 신호는 실시간 자료가 없어(전국 신호 API 에 강남구 값이 없음, 2026-11-21 확인) 설계한 주기와 녹색 시간으로 계산합니다. 실시간 모드에서 서울 t-data 키(`SEOUL_TDATA_API_KEY`)가 있으면 세종대로 시범 구간 교차로는 실시간 잔여 시간을 씁니다.
 - 버스 도착 시각은 공공 API 의 예측을 그대로 씁니다(예측이 틀리는 만큼은 계산에 넣지 않습니다).
 
 ## 자료
 
-버스 실시간 도착 예측(공공데이터포털), 지하철 시각표와 따릉이 실시간 대여 정보(서울 열린데이터광장), 보행망(OpenStreetMap, © OpenStreetMap contributors).
+버스 실시간 도착 예측(공공데이터포털), 지하철 시각표, 따릉이 실시간 대여 정보, 교차로 신호(서울 열린데이터광장·서울 t-data), 보행망(OpenStreetMap, © OpenStreetMap contributors).
 
 ## 생성형 AI 활용
 
-개발 과정에서 Claude(Anthropic)로 설계 명세, 코드, 시험과 검산 스크립트를 작성하고 검토했습니다. 외부 자료 조사는 아스트라에 맡기고 검수한 뒤에만 썼습니다. 앱이 실행될 때는 생성형 AI를 부르지 않습니다.
+기획과 문제 정의는 사람이 했습니다. 자료 수집 도구, 확률 공식의 계산, 웹앱 개발(설계 명세, 코드, 시험과 검산)에 Claude(Anthropic)를 썼고, 외부 자료 조사는 아스트라에 맡겨 검수한 뒤에만 썼습니다. 앱이 실행될 때는 생성형 AI를 부르지 않습니다.
