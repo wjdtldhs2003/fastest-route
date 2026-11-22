@@ -6612,12 +6612,29 @@ def scene_choices(ctx: DataContext) -> tuple[DemoScene, ...]:
                  if scene.scenario_id in ids and scene.moment.date().isoformat() in dates)
 
 
-def scene_apply(state: MutableMapping[str, Any], scene: DemoScene) -> None:
-    """장면 단추(§6.11): 시나리오를 바꿀 때처럼 질의 키와 안내를 지우고, 기록 재생과 그 날짜·시각, 출발 늦추기 0 으로 둔다."""
+def scene_window(summary: Mapping[str, Any] | None, moment: datetime.datetime) -> str | None:
+    """장면 시각이 든 기록 구간의 선택지 값(§6.11, 36단계). 첫 조회 ~ 마지막 조회 안에 드는 구간, 없으면 같은 날짜의 첫 구간, 없으면 None."""
+    windows = list((summary or {}).get("windows", []))
+    t = moment.timestamp()
+    inside = [item for item in windows if float(item["first_unix"]) <= t <= float(item["last_unix"])]
+    same_day = [item for item in windows if item["date"] == moment.date().isoformat()]
+    for group in (inside, same_day):
+        if group:
+            item = min(group, key=lambda w: (float(w["first_unix"]), w["window"]))
+            return f"{item['date']}|{item['window']}"
+    return None
+
+
+def scene_apply(state: MutableMapping[str, Any], scene: DemoScene, summary: Mapping[str, Any] | None = None) -> None:
+    """장면 단추(§6.11): 시나리오를 바꿀 때처럼 질의 키와 안내를 지우고, 기록 재생과 그 날짜·시각, 출발 늦추기 0 으로 둔다.
+    기록 구간 선택도 장면 시각이 든 구간으로 맞춘다(36단계: 11:40 장면인데 구간 상자가 16:00 구간을 보이던 것)."""
     drop_keys(state, (*QUERY_KEYS, "guide"))
     state["kakao_results"] = {}
     store_value(state, "scenario_id", scene.scenario_id)
     store_value(state, "data_mode", DataMode.REPLAY.value)
+    window = scene_window(summary, scene.moment)
+    if window is not None:
+        store_value(state, "replay_window", window)
     store_value(state, "replay_date", scene.moment.date())
     store_value(state, "replay_time", scene.moment.time().replace(tzinfo=None))
     store_value(state, "depart_offset_s", 0)
@@ -6709,11 +6726,11 @@ def _go_intro() -> None:
     st.session_state[PAGE_KEY] = PAGE_INTRO
 
 
-def _intro_scene(index: int) -> None:
+def _intro_scene(index: int, summary: Mapping[str, Any] | None = None) -> None:
     """소개의 장면 단추: 그 장면을 적용하고 길찾기 화면으로 간다."""
     scenes = load_scenes(data_folder())
     if 0 <= index < len(scenes):
-        scene_apply(st.session_state, scenes[index])
+        scene_apply(st.session_state, scenes[index], summary)
     st.session_state[PAGE_KEY] = PAGE_APP
 
 
@@ -6808,7 +6825,7 @@ def render_intro(ctx: DataContext) -> None:
             for scene in choices:
                 index = all_scenes.index(scene)
                 st.button(scene.label, key=f"intro_scene_{index}", icon=":material/play_circle:",
-                          on_click=_intro_scene, args=(index,))
+                          on_click=_intro_scene, args=(index, ctx.summary))
     st.html('<div class="mr-lp"><div class="mr-lp-sec"><h2>지금 출발하면, 실제로 언제 도착할까요?</h2></div></div>')
     st.button(INTRO_START, key="intro_start2", type="primary", icon=":material/arrow_forward:", on_click=_go_app)
     st.divider()
@@ -10656,6 +10673,15 @@ def _ui43(c: _Checker, folder: Path, maps: _MapCalls) -> None:
     c.eq("④ 장면을 누르면: 길찾기 화면, 시나리오, 기록 재생, 날짜와 시각, 출발 늦추기 0", (PAGE_APP, want_state),
          (s.state(PAGE_KEY), got_state()))
     c.true("④ 배지 '2026-11-02(월) 08:00:00 기록 재생'", "2026-11-02(월) 08:00:00 기록 재생" in s.chips(), s.chips())
+    c.true("④ 기록 구간 상자도 장면 날짜의 구간(36단계)", str(s.state("replay_window")).startswith("2026-11-02|"), s.state("replay_window"))
+    two = {"windows": [
+        {"date": "2026-11-21", "window": "오후", "first_unix": _kst_unix(2026, 11, 21, 16, 0), "last_unix": _kst_unix(2026, 11, 21, 16, 50)},
+        {"date": "2026-11-21", "window": "낮", "first_unix": _kst_unix(2026, 11, 21, 11, 0), "last_unix": _kst_unix(2026, 11, 21, 12, 0)},
+    ]}
+    at = lambda h, m, d=21: datetime.datetime(2026, 11, d, h, m, tzinfo=KST)
+    c.eq("④ scene_window: 11:40 은 낮 구간, 16:13 은 오후 구간, 구간 밖 14:00 은 그 날 첫 구간, 다른 날은 없음",
+         ("2026-11-21|낮", "2026-11-21|오후", "2026-11-21|낮", None),
+         (scene_window(two, at(11, 40)), scene_window(two, at(16, 13)), scene_window(two, at(14, 0)), scene_window(two, at(11, 40, 22))))
     scenario, sources = _replayed(truth, syn, config, models, _kst_unix(2026, 11, 2, 8, 0))
     want = easy_answer(ce.run_engine(scenario, syn.default_query, config, sources), scenario)
     answer = s.html_text("mr-answer")
