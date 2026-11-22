@@ -2136,6 +2136,17 @@ def _wait_lines(it: ItineraryResult, scenario: Scenario | None) -> list[str]:
     return parts
 
 
+def _wait_place(it: ItineraryResult) -> str:
+    """기다리는 곳: 버스는 정류장, 지하철은 승강장, 섞이면 둘 다."""
+    modes = {ride.mode for ride in it.rides
+             if ride.board_node_id is not None and ride.plan_wait_s is not None and ride.plan_wait_s >= 120.0}
+    if modes == {TravelMode.SUBWAY}:
+        return "승강장에서"
+    if TravelMode.SUBWAY in modes:
+        return "정류장·승강장에서"
+    return "정류장에서"
+
+
 def versus(output: EngineOutput, scenario: Scenario | None) -> Versus | None:
     """맞대기 카드(39단계). 기존 앱 1위가 추천과 다르고, 추천이 보이는 시각으로 1분 이상 먼저 닿을 때만. 아니면 None."""
     cmp = output.comparison
@@ -2181,14 +2192,14 @@ def versus(output: EngineOutput, scenario: Scenario | None) -> Versus | None:
     else:
         waits = _wait_lines(naive, scenario)
         if waits:
-            why.append(f"정류장에서 {', '.join(waits)} 기다립니다.")
+            why.append(f"{_wait_place(naive)} {', '.join(waits)} 기다립니다.")
     if not any(ride.board_node_id for ride in best.rides):  # 걷기·따릉이, 이미 탄 차에서 내려 걷기
         best_why = "정류장에서 차를 기다리지 않습니다."
     elif any(ride.bundle for ride in best.rides):
         bundle = next(ride for ride in best.rides if ride.bundle)
         best_why = f"{ride_name(bundle)} 가운데 먼저 오는 차를 탑니다."
     elif _wait_lines(best, scenario):
-        best_why = f"정류장에서 {', '.join(_wait_lines(best, scenario))} 기다려도 더 빠릅니다."
+        best_why = f"{_wait_place(best)} {', '.join(_wait_lines(best, scenario))} 기다려도 더 빠릅니다."
     else:
         best_why = "탈 차를 놓칠 걱정이 적은 길입니다."
     p90 = fmt_hm(c0, best.arrival.p90_s, "ceil") if best.arrival.p90_s is not None else ""
