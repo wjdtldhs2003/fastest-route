@@ -369,6 +369,34 @@ def page_css(tokens: Mapping[str, str]) -> str:
 .mr-cmp .mr-cmp-note {{ font-size: 0.85rem; line-height: 1.45; margin-top: 4px; word-break: keep-all; }}
 .mr-cmp .mr-cmp-note.lead {{ font-weight: 700; }}
 .mr-cmp-foot {{ font-size: 0.8rem; color: var(--mr-ink2); line-height: 1.45; margin-top: 6px; word-break: keep-all; }}
+.mr-vs {{ border: 1px solid var(--mr-border); border-radius: 14px; padding: 16px 18px 14px; margin: 14px 0 8px 0; }}
+.mr-vs-h {{ font-size: 0.85rem; font-weight: 600; color: var(--mr-ink2); }}
+.mr-vs-gain {{ font-size: 1.25rem; font-weight: 700; margin: 2px 0 12px 0; word-break: keep-all; }}
+.mr-vs-gain b {{ font-size: 2.1rem; font-weight: 800; color: var(--mr-safe); margin-right: 2px; }}
+.mr-vs-row {{ margin: 0 0 12px 0; }}
+.mr-vs-who {{ display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; margin-bottom: 5px; }}
+.mr-vs-tag {{ font-size: 0.75rem; border: 1px solid var(--mr-ink2); border-radius: 999px; padding: 0 7px; }}
+.mr-vs-tag.best {{ border-color: var(--mr-safe); color: var(--mr-safe); font-weight: 600; }}
+.mr-vs-name {{ font-weight: 650; word-break: keep-all; }}
+.mr-vs-track {{ display: flex; height: 14px; border-radius: 7px; background: var(--mr-grid); overflow: hidden; }}
+.mr-vs-fill {{ flex-basis: 0; }}
+.mr-vs-fill.said {{ background: var(--mr-muted); }}
+.mr-vs-fill.over {{ background: repeating-linear-gradient(135deg, var(--mr-ghost) 0 6px, color-mix(in srgb, var(--mr-ghost) 55%, var(--mr-bg)) 6px 9px);
+  border-left: 2px solid var(--mr-bg); border-radius: 0 7px 7px 0; }}
+.mr-vs-fill.best {{ background: var(--mr-safe); border-radius: 7px; }}
+.mr-vs-fill.rest {{ background: transparent; }}
+.mr-vs-times {{ display: flex; flex-wrap: wrap; gap: 2px 12px; align-items: baseline; margin-top: 5px; font-size: 0.95rem; }}
+.mr-vs-said {{ color: var(--mr-ink2); text-decoration: line-through; text-decoration-color: var(--mr-ghost); }}
+.mr-vs-real {{ font-weight: 700; color: var(--mr-ghost); font-size: 1.1rem; }}
+.mr-vs-late {{ font-size: 0.8rem; font-weight: 600; color: var(--mr-bg); background: var(--mr-ghost); border-radius: 999px; padding: 0 8px; }}
+.mr-vs-ok {{ font-weight: 700; color: var(--mr-safe); font-size: 1.1rem; }}
+.mr-vs-sub {{ color: var(--mr-ink2); font-size: 0.85rem; }}
+.mr-vs-axis {{ font-size: 0.78rem; color: var(--mr-muted); margin: -4px 0 8px 0; }}
+.mr-vs-why {{ font-size: 0.9rem; line-height: 1.5; word-break: keep-all; background: color-mix(in srgb, var(--mr-ghost) 7%, transparent);
+  border-radius: 8px; padding: 8px 12px; margin-top: 4px; }}
+.mr-vs-why ul {{ margin: 4px 0 0 0; padding-left: 18px; }}
+.mr-vs-why li {{ margin: 0; }}
+.mr-vs-why.best {{ background: color-mix(in srgb, var(--mr-safe) 8%, transparent); }}
 .mr-aleave .mr-al {{ display: block; }}
 .mr-alt {{ border-top: 1px solid var(--mr-border); padding-top: 8px; }}
 .mr-alt .mr-alt-t {{ font-weight: 600; line-height: 1.45; display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; }}
@@ -1996,7 +2024,7 @@ def easy_alternatives(output: EngineOutput, scenario: Scenario | None, shown_id:
 
 ALTS_HEAD_HTML = '<div class="mr-alts-h">다른 경로</div>'
 
-COMPARE_HEAD = "경로 비교"
+COMPARE_HEAD = "모든 경로"
 COMPARE_COLS = ("걸리는 시간", "도착", "요금")
 COMPARE_HEAD_HTML = (f'<div class="mr-alts-h">{COMPARE_HEAD}</div><div class="mr-cmp-cols" aria-hidden="true">'
                      + "".join(f"<span>{name}</span>" for name in COMPARE_COLS) + "</div>")
@@ -2017,6 +2045,7 @@ class CompareRow:
     naive: bool  # 기존 길찾기 방식의 1위
     pickable: bool  # "이 경로 보기" 단추를 두나(걸러진 경로는 안내할 수 없어 두지 않는다)
     notes: tuple[str, ...] = ()
+    late_badge: str = ""  # 39단계: 기존 앱 1위가 안내보다 늦으면 등급 배지 대신 "안내보다 N분 늦음"
 
 
 def _compare_ids(output: EngineOutput) -> list[str]:
@@ -2064,6 +2093,130 @@ def naive_notes(output: EngineOutput, scenario: Scenario | None) -> tuple[str, .
     return tuple(lines)
 
 
+# --- 기존 앱 1위와 맞대기 (39단계) ---
+# 경로 비교 표가 경로를 늘어놓기만 해서 "비교" 로 읽히지 않았다(사용자). 답 카드 바로 아래에 기존 앱 1위와 이 앱의 추천을 같은
+# 시간 막대 위에 나란히 놓고, 몇 분 먼저 닿는지와 기존 앱 1위가 늦는 까닭을 한 번에 보인다. 계산은 엔진 결과 그대로다.
+
+VERSUS_HEAD = "기존 길찾기 앱 1위와 비교"
+VERSUS_NAIVE = "기존 앱 1위"
+VERSUS_BEST = "이 앱 추천"
+
+
+@dataclasses.dataclass(frozen=True)
+class Versus:
+    gain: int  # 이 앱 추천이 몇 분 먼저 닿나(보이는 두 시각의 차)
+    late: int  # 기존 앱 1위가 안내보다 몇 분 늦나(보이는 두 시각의 차, 0 이면 늦지 않음)
+    start: str
+    naive_title: str
+    best_title: str
+    promised: str
+    naive_real: str
+    best_arrive: str
+    best_p90: str
+    promised_min: int  # 출발부터 안내 도착까지 분(막대 길이)
+    naive_min: int  # 출발부터 실제 도착까지 분
+    best_min: int  # 출발부터 이 앱 추천 도착까지 분
+    why: tuple[str, ...]
+    best_why: str
+
+
+def _wait_lines(it: ItineraryResult, scenario: Scenario | None) -> list[str]:
+    """정류장에서 2분 이상 기다리는 탑승(계획 기준): "345번을 9분" 처럼."""
+    parts = []
+    for ride in it.rides:
+        wait = ride.plan_wait_s
+        if ride.board_node_id is None or wait is None or wait < 120.0:
+            continue
+        name = ride_name(ride)
+        parts.append(f"{name}{josa(name, '을', '를')} {fmt_minutes(minute_of(wait))}")
+    return parts
+
+
+def versus(output: EngineOutput, scenario: Scenario | None) -> Versus | None:
+    """맞대기 카드(39단계). 기존 앱 1위가 추천과 다르고, 추천이 보이는 시각으로 1분 이상 먼저 닿을 때만. 아니면 None."""
+    cmp = output.comparison
+    items = _items(output)
+    best = items.get(cmp.best_id) if cmp.best_id else None
+    naive = items.get(cmp.naive_best_id) if cmp.naive_best_id else None
+    if best is None or naive is None or cmp.same or cmp.naive_promised_s is None or cmp.naive_mean_s is None:
+        return None
+    if best.arrival.mean_s is None:
+        return None
+    c0 = output.clock_s
+    m0 = minute_of(c0, "floor")
+    m_promised = minute_of(c0 + cmp.naive_promised_s)
+    m_naive = minute_of(c0 + cmp.naive_mean_s)
+    m_best = minute_of(c0 + best.arrival.mean_s)
+    gain = m_naive - m_best
+    if gain < 1:
+        return None
+    late = max(0, m_naive - m_promised)
+    ids = [best.itinerary_id, naive.itinerary_id]
+    why: list[str] = []
+    ghost = _ghost_boarding(naive)
+    names = easy_names(scenario)
+    if ghost is not None:
+        ride, boarding = ghost
+        option = _vehicle(boarding, boarding.naive_trip_id)
+        name = (vehicle_line_name(ride, option.route_id, option.trip_id, scenario) if ride.bundle and option is not None
+                else ride_name(ride))
+        stop = names.get(ride.board_node_id or "", "")
+        if option is not None and boarding.naive_stop_arrival_s is not None:
+            gap = option.dep_s - boarding.naive_stop_arrival_s
+            where = f"{stop}에 " if stop else ""
+            why.append(f"기존 앱 계산으로도 {where}{fmt_clock(c0, boarding.naive_stop_arrival_s)}에 닿아, "
+                       f"{fmt_clock(c0, option.dep_s)}에 떠나는 {name}까지 {max(0, round(gap))}초뿐입니다.")
+        p = boarding.p_catch_naive or 0.0
+        verdict = "거의 탈 수 없습니다" if p < 0.05 else "놓치기 쉽습니다"
+        why.append(f"걷는 속도와 신호 대기를 넣으면 그 {name}{josa(name, '은', '는')} {verdict}.")
+        guided = _vehicle(boarding, boarding.guided_trip_id)
+        if naive.plan_missed_last or guided is None:
+            why.append("놓치면 남은 길을 걸어야 합니다.")
+        elif guided.trip_id != boarding.naive_trip_id:
+            why.append(f"놓치면 다음 {name}{josa(name, '은', '는')} {fmt_hm(c0, guided.dep_s, 'floor')}에 떠납니다.")
+    else:
+        waits = _wait_lines(naive, scenario)
+        if waits:
+            why.append(f"실제 기록으로 계산하면 정류장에서 {', '.join(waits)} 기다립니다.")
+    if not any(ride.board_node_id for ride in best.rides):  # 걷기·따릉이, 이미 탄 차에서 내려 걷기
+        best_why = "정류장에서 차를 기다리지 않습니다."
+    elif any(ride.bundle for ride in best.rides):
+        bundle = next(ride for ride in best.rides if ride.bundle)
+        best_why = f"{ride_name(bundle)} 가운데 먼저 오는 차를 탑니다."
+    elif _wait_lines(best, scenario):
+        best_why = f"정류장에서 {', '.join(_wait_lines(best, scenario))} 기다려도 더 빠릅니다."
+    else:
+        best_why = "탈 차를 놓칠 걱정이 적은 길입니다."
+    p90 = fmt_hm(c0, best.arrival.p90_s, "ceil") if best.arrival.p90_s is not None else ""
+    return Versus(gain, late, fmt_hm(c0, 0.0, "floor"), easy_title(naive, ids, output, scenario), easy_title(best, ids, output, scenario),
+                  fmt_hm(c0, cmp.naive_promised_s), fmt_hm(c0, cmp.naive_mean_s), fmt_hm(c0, best.arrival.mean_s), p90,
+                  max(0, m_promised - m0), max(0, m_naive - m0), max(0, m_best - m0), tuple(why), best_why)
+
+
+def versus_html(v: Versus) -> str:
+    # 막대는 flex-grow 로 나눈다(분 단위, 가장 늦은 도착이 막대 끝). 간단히 보기 본문에 퍼센트 기호를 쓰지 않는다(28단계 검사).
+    span = max(v.promised_min, v.naive_min, v.best_min, 1)
+    seg = lambda css, n: f'<div class="mr-vs-fill {css}" style="flex-grow:{n}"></div>' if n > 0 else ""
+    naive_bar = ('<div class="mr-vs-track">' + seg("said", min(v.promised_min, v.naive_min))
+                 + seg("over", v.naive_min - v.promised_min) + seg("rest", span - max(v.promised_min, v.naive_min)) + '</div>')
+    best_bar = '<div class="mr-vs-track">' + seg("best", v.best_min) + seg("rest", span - v.best_min) + '</div>'
+    late = f' <span class="mr-vs-late">안내보다 {v.late}분 늦음</span>' if v.late >= 1 else ""
+    why = "".join(f"<li>{esc(line)}</li>" for line in v.why)
+    p90 = f' <span class="mr-vs-sub">늦어도 {esc(v.best_p90)}</span>' if v.best_p90 else ""
+    return (f'<div class="mr-vs"><div class="mr-vs-h">{esc(VERSUS_HEAD)}</div>'
+            f'<div class="mr-vs-gain">이 앱 추천이 <b class="mr-num">{v.gain}분</b> 먼저 도착합니다</div>'
+            f'<div class="mr-vs-row naive"><div class="mr-vs-who"><span class="mr-vs-tag">{esc(VERSUS_NAIVE)}</span>'
+            f'<span class="mr-vs-name">{esc(v.naive_title)}</span></div>{naive_bar}'
+            f'<div class="mr-vs-times mr-num"><span class="mr-vs-said">안내 {esc(v.promised)}</span>'
+            f'<span class="mr-vs-real">실제 {esc(v.naive_real)} 도착</span>{late}</div></div>'
+            f'<div class="mr-vs-row best"><div class="mr-vs-who"><span class="mr-vs-tag best">{esc(VERSUS_BEST)}</span>'
+            f'<span class="mr-vs-name">{esc(v.best_title)}</span></div>{best_bar}'
+            f'<div class="mr-vs-times mr-num"><span class="mr-vs-ok">{esc(v.best_arrive)} 도착</span>{p90}</div></div>'
+            f'<div class="mr-vs-axis mr-num"><span>{esc(v.start)} 출발</span></div>'
+            + (f'<div class="mr-vs-why"><b>기존 앱 1위가 늦는 까닭</b><ul>{why}</ul></div>' if why else "")
+            + f'<div class="mr-vs-why best"><b>이 앱 추천</b> {esc(v.best_why)}</div></div>')
+
+
 def compare_rows(output: EngineOutput, scenario: Scenario | None, shown_id: str | None = None) -> tuple[CompareRow, ...]:
     """경로 비교 표(§6.9, 32단계): 최선이 맨 위, 기존 방식 1위는 그 줄에 설명을 붙인다. 최선이 없으면 빈 튜플."""
     items = _items(output)
@@ -2079,7 +2232,11 @@ def compare_rows(output: EngineOutput, scenario: Scenario | None, shown_id: str 
             common_n += 1
     c0 = output.clock_s
     naive_id = output.comparison.naive_best_id
-    notes = naive_notes(output, scenario)
+    # 39단계: 맞대기 카드가 있으면 기존 앱 1위의 설명은 그 카드가 한다(표에 되풀이하지 않는다)
+    notes = () if versus(output, scenario) is not None else naive_notes(output, scenario)
+    cmp = output.comparison
+    late = (minute_of(c0 + cmp.naive_mean_s) - minute_of(c0 + cmp.naive_promised_s)
+            if cmp.naive_mean_s is not None and cmp.naive_promised_s is not None and not cmp.same else 0)
     rows = []
     for rid, part in zip(ids, parts):
         it = items[rid]
@@ -2091,7 +2248,8 @@ def compare_rows(output: EngineOutput, scenario: Scenario | None, shown_id: str 
             rid, common, " → ".join(part[common_n:]), grade,
             "-" if mean is None else fmt_minutes(trip_minutes(c0, mean)), "-" if mean is None else fmt_hm(c0, mean),
             fare_text(it), rid == output.comparison.best_id, rid == shown, rid == naive_id,
-            it.status == RouteStatus.RANKED, notes if rid == naive_id else ()))
+            it.status == RouteStatus.RANKED, notes if rid == naive_id else (),
+            f"안내보다 {late}분 늦음" if rid == naive_id and late >= 1 else ""))
     return tuple(rows)
 
 
@@ -2107,7 +2265,7 @@ def compare_row_html(row: CompareRow) -> str:
     notes = "".join(f'<div class="mr-cmp-note{" lead" if n == 0 and row.naive else ""}">{esc(line)}</div>' for n, line in enumerate(row.notes))
     css = " ".join(c for c in ("mr-cmp", "rec" if row.recommended else "", "naive" if row.naive else "") if c)
     return (f'<div class="{css}"><div class="mr-cmp-t"><span class="mr-cmp-name">{name}</span>'
-            f'{grade_badge(row.grade, easy=True)}{"".join(tags)}</div>'
+            f'{badge_html(row.late_badge, "ghost", "!") if row.late_badge else grade_badge(row.grade, easy=True)}{"".join(tags)}</div>'
             f'<div class="mr-cmp-v mr-num"><span>{esc(row.minutes)}</span><span>{esc(row.arrive)}</span>'
             f'<span>{esc(row.fare)}</span></div>{notes}</div>')
 
@@ -6543,6 +6701,10 @@ def render_simple(p: Prepared, output: EngineOutput | None, moved: Query | None,
                 render_guide_start(p, _items(output)[shown_id])
             # 33단계: 경로 비교 표는 답 카드(안내 시작) 바로 아래. 기존 앱 1위의 설명은 그 줄에 붙는다.
             # 안내 중에는 바꾸기를 안내 카드가 한다(§6.10)
+            if ok and status is None:
+                vs = versus(output, p.display)
+                if vs is not None:
+                    st.html(versus_html(vs))
             if ok:
                 render_simple_alternatives(output, p.display, shown_id, picks=status is None)
             walk_control()
@@ -6660,35 +6822,32 @@ INTRO_START = "길찾기 시작"
 INTRO_BACK = "소개"
 INTRO_SCENES_HEAD = "실제 기록으로 직접 보기"
 INTRO_SCENES_NOTE = "누르면 길찾기 화면이 그 날짜와 시각의 실제 수집 기록으로 열립니다."
-# 대표 장면(기획안 6절 표 첫 줄): 토 16:13, 2호선을 타고 가는 중에 출발
-INTRO_SCENE_ROWS: tuple[tuple[str, str, str, int, str], ...] = (
-    ("기존 앱 1위 안내", "16:23 도착", "muted", 10, "2호선 → 345번 → 143번"),
-    ("그대로 따라가면 실제로", "16:41 도착 · 18분 늦음", "ghost", 28, "345번과 143번이 도착 예측보다 늦게 옴"),
-    ("이 앱의 추천", "16:28 도착 · 13분 빠름", "safe", 15, "버스·지하철만으로"),
+# 39단계: 토스 첫 화면처럼 화면 한 장에 메시지 하나. 큰 제목 두 줄, 짧은 설명, 휴대폰 틀 안의 실제 앱 화면.
+INTRO_HERO = ("탈 수 있다던 그 버스,", "실제로는 놓칩니다.")
+INTRO_HERO_SUB = "지금 나서면 실제로 가장 빨리 도착하는 길을 찾아 드려요."
+# 대표 장면(기획안 6절 표 첫 줄): 토 16:13, 2호선 안에서 출발. 숫자는 따릉이 없이(버스·지하철만) 계산한 값이다.
+INTRO_VERSUS = Versus(
+    gain=13, late=18, start="16:13", naive_title="지하철 2호선 → 345번 → 143번", best_title="지하철 2호선 → 143·146·345번",
+    promised="16:23", naive_real="16:41", best_arrive="16:28", best_p90="",
+    promised_min=10, naive_min=28, best_min=15,
+    why=("버스 두 대가 도착 예측보다 늦게 와, 정류장에서 345번을 9분, 143번을 7분 기다렸습니다.",),
+    best_why="143·146·345번 가운데 먼저 오는 차를 탑니다.")
+# (사진 파일, 작은 제목, 큰 제목 두 줄, 설명)
+INTRO_PANELS: tuple[tuple[str, str, tuple[str, str], str], ...] = (
+    ("answer.jpg", "답부터", ("몇 시에 도착하는지,", "늦어도 몇 시인지"),
+     "걸음, 신호, 버스 도착 오차로 환승마다 탈 확률을 계산하고, 놓쳤을 때 기다리는 시간까지 넣어 길을 고릅니다."),
+    ("versus.jpg", "기존 앱 1위와 비교", ("기존 앱이 안내한 길,", "실제로는 20분 늦었어요"),
+     "토요일 11:40 강남역. 논현역에서 갈아탈 140번은 15초 차이라 탈 수 없었습니다. 이 앱은 처음부터 140·470번을 안내합니다."),
+    ("steps.jpg", "길 안내", ("지금 할 일만,", "한 단계씩"),
+     "서 있는 곳이나 이미 탄 지하철에서 출발하고, 안내 중에는 1분마다 다시 계산해 환승이 놓치기 쉬워지면 알려 드려요."),
 )
-INTRO_SCENE_SPAN_MIN = 30
 INTRO_STATS: tuple[tuple[str, str, str], ...] = (
     ("46~57%", "기존 앱 1위에 놓치기 쉬운 환승이 낀 출발", "강남역 → 신사역, 금·토 1분마다 실제 기록으로 재생"),
     ("최대 21분", "기존 앱 1위가 안내보다 늦게 도착한 시간", "토 11:40 강남역 → 신사역, 갈아탈 140번을 놓침"),
     ("94%", "탈 확률 80% 이상이라 한 환승을 실제로 탄 비율", "실측 추적 3,000회, 금 20:35~자정"),
     ("22번", "카카오맵 1위 길 45번 중 안내보다 2분 이상 늦은 횟수", "일 09:00~13:30, 수집 시간 안 도착만(버스 길 최대 10분)"),
 )
-INTRO_FEATURES: tuple[tuple[str, str, str], ...] = (
-    ("filter_alt", "놓치기 쉬운 환승을 미리 걸러요",
-     "걸음, 신호, 버스 오차로 환승마다 탈 확률을 계산하고, 놓쳤을 때 기다리는 시간까지 넣어 길을 고릅니다."),
-    ("schedule", "몇 시 도착, 늦어도 몇 시",
-     "걸리는 시간과 도착 시각, 늦어도 도착하는 시각, 지금 할 일을 먼저 보여 줍니다."),
-    ("compare_arrows", "기존 앱 1위와 나란히 비교",
-     "기존 앱 1위의 안내 도착과 이 앱이 계산한 실제 도착을 같은 표에 놓습니다."),
-    ("directions_subway", "지금 서 있는 곳, 타고 가는 차에서",
-     "휴대폰 위치나 이미 탄 지하철에서 출발하고, 안내 중에는 1분마다 다시 계산합니다."),
-)
-INTRO_STEPS: tuple[tuple[str, str], ...] = (
-    ("지금 상태", "서 있는 곳이나 탄 차에서 출발"),
-    ("조합 찾기", "내릴 곳, 수단, 탈 차의 조합"),
-    ("확률 계산", "차마다 탈 확률과 도착 분포"),
-    ("쉬운 답", "몇 시 도착, 지금 할 일"),
-)
+INTRO_IMAGE_DIR = _APP_DIR / "data" / "intro"
 INTRO_SOURCES = ("데이터: 서울 열린데이터광장(버스·지하철·따릉이·신호), 공공데이터포털, © OpenStreetMap 기여자(ODbL). "
                  "개발에 생성형 AI(Claude)를 썼고, 앱 실행 중에는 부르지 않습니다.")
 
@@ -6741,95 +6900,98 @@ def _intro_scene(index: int, summary: Mapping[str, Any] | None = None) -> None:
 
 def intro_css() -> str:
     return """<style>
-[data-testid="stMainBlockContainer"] { max-width: 1040px; margin-left: auto; margin-right: auto; }
-.mr-lp-hero { padding: 0 0 8px; }
-.mr-lp-eyebrow { font-size: 0.85rem; font-weight: 600; color: var(--mr-safe); letter-spacing: 0.02em; margin-bottom: 10px; }
-.mr-lp-hero h1 { font-size: clamp(2rem, 6vw, 3.2rem); line-height: 1.2; font-weight: 800; margin: 0 0 14px; padding: 0; word-break: keep-all; }
-.mr-lp-lead { font-size: clamp(1.05rem, 2.6vw, 1.3rem); line-height: 1.6; color: var(--mr-ink2); max-width: 720px; word-break: keep-all; margin: 0; }
-.mr-lp-sec { padding: 40px 0 6px; }
-.mr-lp-kicker { font-size: 0.85rem; font-weight: 600; color: var(--mr-muted); margin-bottom: 6px; }
-.mr-lp-sec h2 { font-size: clamp(1.4rem, 3.6vw, 2rem); line-height: 1.3; font-weight: 750; margin: 0 0 10px; padding: 0; word-break: keep-all; }
-.mr-lp-p { font-size: 1rem; line-height: 1.65; color: var(--mr-ink2); max-width: 760px; word-break: keep-all; margin: 0 0 14px; }
-.mr-lp-card { border: 1px solid var(--mr-border); border-radius: 14px; padding: 20px 20px 14px; }
-.mr-lp-row { margin-bottom: 16px; }
-.mr-lp-rowhead { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; font-size: 0.95rem; margin-bottom: 6px; }
-.mr-lp-rowhead b { font-weight: 650; }
-.mr-lp-rowhead span { font-variant-numeric: tabular-nums; font-weight: 650; }
-.mr-lp-track { position: relative; height: 14px; border-radius: 7px; background: var(--mr-grid); overflow: hidden; }
-.mr-lp-fill { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 7px; }
-.mr-lp-sub { font-size: 0.85rem; color: var(--mr-muted); margin-top: 4px; }
-.mr-lp-axis { display: flex; justify-content: space-between; font-size: 0.8rem; color: var(--mr-muted); font-variant-numeric: tabular-nums; margin-top: 4px; }
-.mr-lp-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 14px; }
-.mr-lp-stat b { display: block; font-size: clamp(2rem, 5vw, 2.6rem); line-height: 1.1; font-weight: 800; font-variant-numeric: tabular-nums; margin-bottom: 8px; }
-.mr-lp-stat div { font-size: 0.98rem; line-height: 1.5; word-break: keep-all; }
-.mr-lp-stat small { display: block; font-size: 0.82rem; line-height: 1.45; color: var(--mr-muted); margin-top: 8px; word-break: keep-all; }
-.mr-lp-feat .mr-lp-icon { font-family: 'Material Symbols Rounded'; font-weight: normal; font-style: normal; line-height: 1; font-size: 28px; color: var(--mr-safe); }
-.mr-lp-feat h3 { font-size: 1.1rem; font-weight: 700; margin: 6px 0 6px; padding: 0; word-break: keep-all; }
-.mr-lp-feat p { font-size: 0.95rem; line-height: 1.6; color: var(--mr-ink2); margin: 0 0 6px; word-break: keep-all; }
-.mr-lp-steps { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; counter-reset: mrstep; }
-.mr-lp-step { border-left: 3px solid var(--mr-safe); padding: 4px 0 4px 14px; }
-.mr-lp-step b { display: block; font-size: 1rem; margin-bottom: 4px; }
-.mr-lp-step b::before { counter-increment: mrstep; content: counter(mrstep) ". "; color: var(--mr-safe); }
-.mr-lp-step span { font-size: 0.92rem; line-height: 1.55; color: var(--mr-ink2); word-break: keep-all; }
-.mr-lp-foot { font-size: 0.85rem; line-height: 1.6; color: var(--mr-muted); word-break: keep-all; }
-.st-key-mr_intro_scenes button { width: 100%; justify-content: flex-start; text-align: left; min-height: 3rem; }
-.st-key-intro_start button, .st-key-intro_start2 button { min-height: 3rem; padding-left: 28px; padding-right: 28px; font-size: 1.05rem;
-  background: var(--mr-ink); border-color: var(--mr-ink); color: var(--mr-bg); }
+[data-testid="stMainBlockContainer"] { max-width: 1080px; margin-left: auto; margin-right: auto; }
+.mr-lp { word-break: keep-all; }
+.mr-lp-hero { min-height: calc(100svh - 230px); display: flex; flex-direction: column; justify-content: center; padding: 24px 0 8px; }
+.mr-lp-eyebrow { font-size: 1rem; font-weight: 700; color: var(--mr-safe); margin-bottom: 18px; }
+.mr-lp-hero h1 { font-size: clamp(2.4rem, 8.5vw, 4.6rem); line-height: 1.18; font-weight: 800; letter-spacing: -0.03em; margin: 0 0 22px; padding: 0; }
+.mr-lp-lead { font-size: clamp(1.1rem, 3vw, 1.45rem); line-height: 1.55; color: var(--mr-ink2); margin: 0; }
+.mr-lp-sec { padding: 96px 0 24px; }
+.mr-lp-kicker { font-size: 1rem; font-weight: 700; color: var(--mr-safe); margin-bottom: 12px; }
+.mr-lp-sec h2 { font-size: clamp(1.9rem, 6vw, 3rem); line-height: 1.25; font-weight: 800; letter-spacing: -0.025em; margin: 0 0 18px; padding: 0; }
+.mr-lp-p { font-size: clamp(1rem, 2.4vw, 1.15rem); line-height: 1.65; color: var(--mr-ink2); max-width: 560px; margin: 0 0 8px; }
+.mr-lp-center { text-align: center; }
+.mr-lp-center .mr-lp-p { margin-left: auto; margin-right: auto; }
+.mr-lp-vswrap { max-width: 560px; margin: 32px auto 0; text-align: left; }
+.mr-lp-vswrap .mr-vs { box-shadow: 0 24px 60px rgba(0,0,0,0.10); border-radius: 20px; padding: 22px 22px 18px; }
+.mr-lp-split { display: grid; grid-template-columns: 1fr; gap: 36px; align-items: center; }
+@media (min-width: 820px) { .mr-lp-split { grid-template-columns: 1fr 1fr; gap: 56px; } .mr-lp-split.flip > :first-child { order: 2; } }
+.mr-lp-phone { width: min(300px, 76vw); margin: 0 auto; border: 9px solid #17171a; border-radius: 42px; overflow: hidden;
+  background: #ffffff; box-shadow: 0 30px 70px rgba(0,0,0,0.18); aspect-ratio: 390 / 844; }
+.mr-lp-phone img { display: block; width: 100%; height: 100%; object-fit: cover; object-position: top; }
+.mr-lp-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 36px 28px; margin-top: 36px; }
+.mr-lp-stat b { display: block; font-size: clamp(2.6rem, 8vw, 3.6rem); line-height: 1.05; font-weight: 800; letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums; margin-bottom: 10px; }
+.mr-lp-stat div { font-size: 1.05rem; line-height: 1.5; font-weight: 600; }
+.mr-lp-stat small { display: block; font-size: 0.85rem; line-height: 1.45; color: var(--mr-muted); margin-top: 6px; }
+.mr-lp-foot { font-size: 0.85rem; line-height: 1.6; color: var(--mr-muted); }
+@supports (animation-timeline: view()) {
+  @keyframes mr-lp-up { from { opacity: 0; transform: translateY(48px); } to { opacity: 1; transform: none; } }
+  .mr-lp-sec > * { animation: mr-lp-up linear both; animation-timeline: view(); animation-range: entry 0% cover 28%; }
+}
+@media (prefers-reduced-motion: reduce) { .mr-lp-sec > * { animation: none !important; } }
+.st-key-mr_intro_scenes { max-width: 640px; margin: 0 auto; }
+.st-key-mr_intro_scenes button { width: 100%; justify-content: flex-start; text-align: left; min-height: 3.2rem; border-radius: 14px; }
+.st-key-mr_intro_scenes button > div { justify-content: flex-start; }
+.st-key-intro_start button, .st-key-intro_start2 button { min-height: 3.4rem; padding-left: 34px; padding-right: 34px; font-size: 1.1rem;
+  border-radius: 16px; background: var(--mr-ink); border-color: var(--mr-ink); color: var(--mr-bg); }
 .st-key-intro_start button:hover, .st-key-intro_start2 button:hover { background: var(--mr-ink2); border-color: var(--mr-ink2); color: var(--mr-bg); }
 .st-key-intro_start button p, .st-key-intro_start2 button p, .st-key-intro_start button span, .st-key-intro_start2 button span { color: var(--mr-bg); }
 </style>"""
 
 
-def intro_scene_html() -> str:
-    rows = []
-    for name, when, color, minutes, sub in INTRO_SCENE_ROWS:
-        width = 100.0 * minutes / INTRO_SCENE_SPAN_MIN
-        rows.append(f'<div class="mr-lp-row"><div class="mr-lp-rowhead"><b>{esc(name)}</b><span>{esc(when)}</span></div>'
-                    f'<div class="mr-lp-track"><div class="mr-lp-fill" style="width:{width:.1f}%;background:var(--mr-{color})"></div></div>'
-                    f'<div class="mr-lp-sub">{esc(sub)}</div></div>')
-    return (f'<div class="mr-lp-card">{"".join(rows)}'
-            '<div class="mr-lp-axis"><span>16:13 출발</span><span>16:28</span><span>16:43</span></div></div>')
+_INTRO_IMAGES: dict[str, str] = {}
+
+
+def intro_image(name: str) -> str:
+    """소개의 휴대폰 화면 사진(data/intro/)을 data URI 로. 없으면 ""(사진 자리를 비운다)."""
+    if name not in _INTRO_IMAGES:
+        path = INTRO_IMAGE_DIR / name
+        try:
+            import base64
+            _INTRO_IMAGES[name] = "data:image/jpeg;base64," + base64.b64encode(path.read_bytes()).decode("ascii")
+        except OSError:
+            _INTRO_IMAGES[name] = ""
+    return _INTRO_IMAGES[name]
+
+
+def intro_panel_html(n: int, image: str, kicker: str, title: tuple[str, str], body: str) -> str:
+    src = intro_image(image)
+    phone = (f'<div class="mr-lp-phone"><img src="{src}" alt="{esc(kicker)} 화면"></div>' if src else "<div></div>")
+    return (f'<div class="mr-lp"><div class="mr-lp-sec"><div class="mr-lp-split{" flip" if n % 2 else ""}">'
+            f'<div><div class="mr-lp-kicker">{esc(kicker)}</div><h2>{esc(title[0])}<br>{esc(title[1])}</h2>'
+            f'<p class="mr-lp-p">{esc(body)}</p></div>{phone}</div></div></div>')
 
 
 def render_intro(ctx: DataContext) -> None:
-    """소개 페이지(§6.12): 내려 보며 읽는 한 장. 장면 단추는 기록이 있을 때만."""
+    """소개 페이지(§6.12, 39단계): 화면 한 장에 메시지 하나씩 내려 보는 첫 화면. 장면 단추는 기록이 있을 때만."""
     keep_for_intro(st.session_state)
     st.html(intro_css())
-    st.html('<div class="mr-lp"><div class="mr-lp-hero">'
-            '<div class="mr-lp-eyebrow">서울 대중교통 · 실제 수집 기록으로 확인</div>'
-            f'<h1>{esc(APP_TITLE)}</h1>'
-            '<p class="mr-lp-lead">지도 앱이 “탈 수 있다”고 한 그 차, 실제로는 놓치기 쉽습니다. '
-            '이 앱은 실제로 가장 빨리 도착하는 길을 찾아 줍니다.</p></div></div>')
+    st.html(f'<div class="mr-lp"><div class="mr-lp-hero"><div class="mr-lp-eyebrow">{esc(APP_TITLE)}</div>'
+            f'<h1>{esc(INTRO_HERO[0])}<br>{esc(INTRO_HERO[1])}</h1><p class="mr-lp-lead">{esc(INTRO_HERO_SUB)}</p></div></div>')
     st.button(INTRO_START, key="intro_start", type="primary", icon=":material/arrow_forward:", on_click=_go_app)
-    st.html('<div class="mr-lp"><div class="mr-lp-sec"><div class="mr-lp-kicker">같은 순간, 두 안내</div>'
-            '<h2>화면에서 가장 빠른 길이 실제로는 가장 늦어집니다</h2>'
-            '<p class="mr-lp-p">토요일 16:13, 2호선 안에서 출발한 실제 장면입니다. 기존 안내대로 가면 버스가 예측보다 늦게 와 18분 늦습니다.</p>'
-            f'{intro_scene_html()}</div>'
-            '<div class="mr-lp-sec"><div class="mr-lp-kicker">실제 기록으로 확인한 숫자</div>'
-            '<h2>강남·삼성 일대 버스 6개 노선과 따릉이를 직접 수집해 다시 계산했습니다</h2>'
-            '<div class="mr-lp-grid">'
-            + "".join(f'<div class="mr-lp-card mr-lp-stat"><b>{esc(big)}</b><div>{esc(what)}</div><small>{esc(basis)}</small></div>'
+    st.html('<div class="mr-lp"><div class="mr-lp-sec mr-lp-center"><div class="mr-lp-kicker">토요일 16:13, 실제 기록</div>'
+            '<h2>지도 앱 1위대로 갔다면<br>18분 늦게 도착했어요</h2>'
+            '<p class="mr-lp-p">2호선 안에서 출발한 같은 순간, 두 안내를 실제 수집 기록으로 다시 계산했습니다.</p>'
+            f'<div class="mr-lp-vswrap">{versus_html(INTRO_VERSUS)}</div></div></div>')
+    for n, (image, kicker, title, body) in enumerate(INTRO_PANELS):
+        st.html(intro_panel_html(n, image, kicker, title, body))
+    st.html('<div class="mr-lp"><div class="mr-lp-sec"><div class="mr-lp-kicker">강남·삼성 일대 버스 6개 노선과 따릉이를 직접 수집</div>'
+            '<h2>실제로 모은 기록으로<br>다시 계산했어요</h2><div class="mr-lp-stats">'
+            + "".join(f'<div class="mr-lp-stat"><b>{esc(big)}</b><div>{esc(what)}</div><small>{esc(basis)}</small></div>'
                       for big, what, basis in INTRO_STATS)
-            + '</div></div>'
-            '<div class="mr-lp-sec"><div class="mr-lp-kicker">무엇이 다른가요</div><h2>답부터, 쉬운 말로</h2><div class="mr-lp-grid">'
-            + "".join(f'<div class="mr-lp-card mr-lp-feat"><span class="mr-lp-icon" aria-hidden="true">{icon}</span>'
-                      f'<h3>{esc(title)}</h3><p>{esc(body)}</p></div>' for icon, title, body in INTRO_FEATURES)
-            + '</div></div>'
-            '<div class="mr-lp-sec"><div class="mr-lp-kicker">어떻게 계산하나요</div><h2>네 단계로 실제 도착을 계산합니다</h2>'
-            '<div class="mr-lp-steps">'
-            + "".join(f'<div class="mr-lp-step"><b>{esc(title)}</b><span>{esc(body)}</span></div>' for title, body in INTRO_STEPS)
             + '</div></div></div>')
     choices = scene_choices(ctx)
     if choices:
         all_scenes = load_scenes(ctx.folder)
-        st.html(f'<div class="mr-lp"><div class="mr-lp-sec"><div class="mr-lp-kicker">직접 확인</div>'
+        st.html(f'<div class="mr-lp"><div class="mr-lp-sec mr-lp-center"><div class="mr-lp-kicker">직접 확인</div>'
                 f'<h2>{esc(INTRO_SCENES_HEAD)}</h2><p class="mr-lp-p">{esc(INTRO_SCENES_NOTE)}</p></div></div>')
         with st.container(key="mr_intro_scenes"):
             for scene in choices:
                 index = all_scenes.index(scene)
-                st.button(scene.label, key=f"intro_scene_{index}", icon=":material/play_circle:",
+                st.button(scene.label, key=f"intro_scene_{index}", icon=":material/play_circle:", width="stretch",
                           on_click=_intro_scene, args=(index, ctx.summary))
-    st.html('<div class="mr-lp"><div class="mr-lp-sec"><h2>지금 출발하면, 실제로 언제 도착할까요?</h2></div></div>')
+    st.html('<div class="mr-lp"><div class="mr-lp-sec"><h2>지금 출발하면,<br>실제로 언제 도착할까요?</h2></div></div>')
     st.button(INTRO_START, key="intro_start2", type="primary", icon=":material/arrow_forward:", on_click=_go_app)
     st.divider()
     st.html(f'<div class="mr-lp-foot">{esc(INTRO_SOURCES)}</div>')
@@ -10130,10 +10292,15 @@ def _ui31(c: _Checker, folder: Path, maps: _MapCalls) -> None:
     c.eq("⓪ 첫 화면 경로 비교 표 = E1 엔진 결과 (32단계)", compare_htmls(out1, a), s.compare())
     c.eq("⓪ 표의 줄: 공통 앞부분, 뒷부분, 분, 도착, 요금, 추천, 기존 앱 1위, 설명",
          [("지하철 2호선 → ", "지하철 9호선 → 따릉이", "24분", "19:44", "2,550원", True, False, ()),
-          ("지하철 2호선 → ", "지하철 9호선 → 143·146·345번", "27분", "19:47", "1,550원", False, True,
-           ("기존 길찾기 앱 안내 19:40 도착 → 이 앱 계산 19:47 도착 (7분 늦음)",)),
+          ("지하철 2호선 → ", "지하철 9호선 → 143·146·345번", "27분", "19:47", "1,550원", False, True, ()),
           ("지하철 2호선 → ", "지하철 9호선", "26분", "19:46", "1,550원", False, False, ())],
          [(r.common, r.tail, r.minutes, r.arrive, r.fare, r.recommended, r.naive, r.notes) for r in compare_rows(out1, a)])
+    # 39단계: 기존 앱 1위의 설명은 맞대기 카드가 한다(표에는 되풀이하지 않음). 설명 함수의 글은 그대로 확인한다.
+    c.eq("⓪ 기존 앱 1위 설명(naive_notes)", ("기존 길찾기 앱 안내 19:40 도착 → 이 앱 계산 19:47 도착 (7분 늦음)",), naive_notes(out1, a))
+    vs1 = versus(out1, a)
+    c.eq("⓪ 맞대기 카드 = E1 엔진 결과 (39단계)", [versus_html(vs1)] if vs1 else [], s.htmls("mr-vs"))
+    c.eq("⓪ 맞대기 카드 숫자: 먼저 닿는 분, 안내보다 늦은 분, 안내·실제·추천 도착", (3, 7, "19:40", "19:47", "19:44"),
+         (vs1.gain, vs1.late, vs1.promised, vs1.naive_real, vs1.best_arrive) if vs1 else None)
     c.eq("⓪ 주의 카드는 없다(표의 줄로 옮김)", [], s.htmls("mr-caution"))
     first = _Screen(c, maps).run("자세히 보기 첫 실행 (UI-31 ⓪)")
     c.eq("⓪ 자세히 보기로 시작하면 시나리오 기본 질의 그대로", (query_defaults(a)["origin_kind"], query_defaults(a)["dest_place"]),
@@ -10154,12 +10321,12 @@ def _ui31(c: _Checker, folder: Path, maps: _MapCalls) -> None:
     c.eq("② E2: 경로 비교 표", compare_htmls(out2, a), s.compare())
     c.eq("② E2: 기존 앱 1위 줄의 설명", ("기존 길찾기 앱 안내 19:44 도착 → 이 앱 계산 19:47 도착 (3분 늦음)",
                                    "기존 앱이 타라는 2호선 외선 종합운동장행 열차(19:39 출발)는 놓치기 쉽습니다."),
-         next((r.notes for r in compare_rows(out2, a) if r.naive), None))
+         naive_notes(out2, a))
     naive2 = next((it for it in out2.itineraries if it.itinerary_id == out2.comparison.naive_best_id), None)
-    c.eq("② E2: 기존 앱 1위 줄 배지는 놓치기 쉬움, 그 경로의 자체 등급은 그대로(35단계: 설명 줄과 같은 말)",
+    c.eq("② E2: 기존 앱 1위 줄 등급은 놓치기 쉬움, 배지는 '안내보다 3분 늦음'(39단계)",
          (Grade.GHOST, True, True),
          (next((r.grade for r in compare_rows(out2, a) if r.naive), None), naive2 is not None and _ghost_boarding(naive2) is not None,
-          "놓치기 쉬움" in _plain(next((h for h in s.compare() if "기존 앱 1위" in h), ""))))
+          "안내보다 3분 늦음" in _plain(next((h for h in s.compare() if "기존 앱 1위" in h), ""))))
     _no_banned(c, "②", s)
     # ③ 자세히 보기, 사이드바
     s = _Screen(c, maps).run("자세히 보기 첫 실행 (UI-31)")
@@ -10648,9 +10815,11 @@ def _ui43(c: _Checker, folder: Path, maps: _MapCalls) -> None:
          (intro_keys(s), s.has("button", "to_intro") or bool(s.htmls("mr-answer")), [k for k in intro_keys(s) if "scene" in k],
           s.state(PAGE_KEY)))
     page_text = " ".join(s.strings())
-    c.true("① 소개 글: 제목, 대표 장면 세 줄(16:23 안내, 16:41 실제, 16:28 추천), 숫자 셋, 기능 넷, 계산 네 단계",
-           all(t in page_text for t in (APP_TITLE, "16:23 도착", "16:41 도착 · 18분 늦음", "16:28 도착 · 13분 빠름", "46~57%",
-                                         "최대 21분", "94%", "45번 중 안내보다 2분 이상", "기존 앱 1위와 나란히 비교", "확률 계산")), page_text[:400])
+    c.true("① 소개 글(39단계): 제목, 첫 화면 문장, 16:13 맞대기(안내 16:23, 실제 16:41, 추천 16:28, 13분 먼저), 화면 셋, 숫자 넷",
+           all(t in page_text for t in (APP_TITLE, INTRO_HERO[0], INTRO_HERO[1], "안내 16:23", "실제 16:41 도착", "안내보다 18분 늦음",
+                                         "16:28 도착", "13분", "46~57%", "최대 21분", "94%", "45번 중 안내보다 2분 이상",
+                                         *(panel[2][0] for panel in INTRO_PANELS))), page_text[:400])
+    c.eq("① 소개의 휴대폰 화면 사진 셋이 있다", [True, True, True], [bool(intro_image(panel[0])) for panel in INTRO_PANELS])
     _no_banned(c, "①", s)
     scenes = {"scenes": [{"at": "2026-11-02 08:00:00", "name": "시험 장면", "scenario": syn.id},
                          {"at": "2026-11-02 08:20:00", "name": "없는 시나리오", "scenario": "NOPE"},
@@ -10851,7 +11020,9 @@ def _ui32(c: _Checker, folder: Path, maps: _MapCalls) -> None:
           ("140·470번 · 신분당선강남역 승차", "21분", "23:41", "1,500원", False, False, True)],
          [(r.common + r.tail, r.minutes, r.arrive, r.fare, r.recommended, r.naive, r.pickable) for r in rows_b])
     c.eq("② B: 기존 앱 1위(걸러짐) 줄의 설명", ("기존 길찾기 앱 안내 23:30 도착 → 이 앱 계산 23:54 도착 (24분 늦음)",
-                                         "기존 앱이 타라는 360번 막차(23:22 출발)는 놓치기 쉽습니다."), rows_b[1].notes)
+                                         "기존 앱이 타라는 360번 막차(23:22 출발)는 놓치기 쉽습니다."), naive_notes(exp_b, b))
+    c.eq("② B: 표의 기존 앱 1위 줄에는 설명을 되풀이하지 않고 '안내보다 24분 늦음' (39단계)", ((), "안내보다 24분 늦음"),
+         (rows_b[1].notes, rows_b[1].late_badge))
     c.eq("② B: 줄 단추 (보는 줄과 걸러진 줄에는 없음)", [(f"alt_pick_{n}", ALT_PICK_LABEL) for n in (3, 4, 5)],
          [(item.key, item.label) for item in s.at.main.button if str(item.key).startswith("alt_pick_")])
     c.eq("② B: 돌아가기 단추 없음", False, s.has("button", "pick_best"))
@@ -10894,7 +11065,7 @@ def _ui32(c: _Checker, folder: Path, maps: _MapCalls) -> None:
     c.eq("⑥ 이름과 설명", [("따릉이", ()), ("140·470번 · 지하철2호선강남역 승차", ("기존 길찾기 앱 안내 23:32 도착 → 이 앱 계산 23:41 도착 (9분 늦음)",
                                                                    "기존 앱이 타라는 140번(23:25 출발)은 놓치기 쉽습니다.")),
                         ("140·470번 · 신분당선강남역 승차", ()), ("지하철 2호선 → 지하철 3호선", ()), ("도보", ())],
-         [(row.common + row.tail, row.notes) for row in rows_60])
+         [(row.common + row.tail, naive_notes(exp_60, shifted) if row.naive else row.notes) for row in rows_60])
     # ⑦ A 기본: 지금 할 일과 기존 1위 덧말
     exp_a = ce.run_engine(a, a.default_query, config)
     s = _Screen(c, maps, view=None, scenario="A").run("간단히 보기, 시나리오 기본 질의 (⑦)")
@@ -10902,7 +11073,7 @@ def _ui32(c: _Checker, folder: Path, maps: _MapCalls) -> None:
     c.true("⑦ A 지금 할 일", "지금 할 일: 삼성역 2호선 승강장에서 내리기 (19:21 도착)" in s.html_text("mr-answer"), s.html_text("mr-answer"))
     c.eq("⑦ A 기존 앱 1위 줄의 설명", ("기존 길찾기 앱 안내 19:29 도착 → 이 앱 계산 19:34 도착 (5분 늦음)",
                                  "기존 앱이 타라는 146번(19:24 출발)은 놓치기 쉽습니다."),
-         next((r.notes for r in compare_rows(exp_a, a) if r.naive), None))
+         naive_notes(exp_a, a))
     _no_banned(c, "⑦", s)
 
 
@@ -11098,8 +11269,13 @@ def _ui30(c: _Checker, folder: Path, maps: _MapCalls) -> None:
     s = _Screen(c, maps, view=None).run("간단히 보기 첫 실행 (⑧)").scenario("B")
     cards = [item for item in s.compare() if 'class="mr-cmp naive"' in item]
     c.eq("⑧ B 경로 비교 표", compare_htmls(expected_b, b), s.compare())
-    c.true("⑧ B 기존 앱 1위 줄은 놓치기 쉬움 배지와 설명", len(cards) == 1 and 'class="mr-badge ghost"' in cards[0]
-           and "기존 길찾기 앱 안내 23:30 도착 → 이 앱 계산 23:54 도착" in cards[0], cards)
+    c.true("⑧ B 기존 앱 1위 줄은 빨간 '안내보다 24분 늦음' 배지 (39단계)", len(cards) == 1 and 'class="mr-badge ghost"' in cards[0]
+           and "안내보다 24분 늦음" in cards[0], cards)
+    vs_b = versus(expected_b, b)
+    c.eq("⑧ B 맞대기 카드 (39단계)", [versus_html(vs_b)] if vs_b else ["없음"], s.htmls("mr-vs"))
+    c.true("⑧ B 맞대기 카드: 안내 23:30, 실제 23:54, 막차를 놓치면 걷기",
+           vs_b is not None and (vs_b.promised, vs_b.naive_real) == ("23:30", "23:54") and "놓치면 남은 길을 걸어야 합니다." in vs_b.why,
+           vs_b)
     _no_banned(c, "⑧", s)
     # ⑨ 골든: 찍기를 기다림, 찍은 점이 길에서 멀다
     s = _Screen(c, maps, view=None).run("간단히 보기 첫 실행 (⑨)").scenario(ce.GOLDEN_ID)
