@@ -227,6 +227,9 @@ TOGGLE_OFF_RING_PX = 1.5  # 꺼진 토글 테두리 두께(25단계, page_css)
 DEADLINE_EASY_LABEL = "도착해야 하는 시각 정하기"  # 간단히 보기의 마감 켜기(19단계)
 LEAVE_SCAN_MAX_S = 600  # 출발 여유를 찾는 가장 긴 늦춤(초, 19단계)
 LEAVE_ORIGIN_KINDS = (OriginKind.AT_NODE, OriginKind.AT_POINT)  # 출발 여유를 보이는 출발(차량 안 출발은 늦출 수 없다)
+APP_SCENES_LABEL = "다른 실제 장면"
+INTRO_HOWTO = ("직접 써 보기: ① 지금 위치에서 출발을 누르고 ② 도착지를 고른 뒤 ③ 이 경로로 안내 시작을 누르면, "
+               "가는 동안 1분마다 다시 계산합니다. 지금은 강남·삼성 일대에서 동작합니다.")
 SIDE_MORE_LABEL = "경로 고르는 기준과 세부 설정"  # 간단히 보기 사이드바의 접힘(§6.9, 17단계)
 BACK_TO_BEST_LABEL = "추천 경로로 돌아가기"
 ALT_PICK_LABEL = "이 경로 보기"
@@ -4242,6 +4245,14 @@ def render_header(p: Prepared, output: EngineOutput | None, moved: Query | None,
         if simple:  # 34단계: 소개 페이지로 돌아가기
             st.button(INTRO_BACK, key="to_intro", type="tertiary", icon=":material/arrow_back:", on_click=_go_intro)
         render_view_switch()
+        choices = scene_choices(p.ctx)
+        if choices:  # 소개로 돌아가지 않고 다른 실제 기록 장면으로 바꾸기
+            all_scenes = load_scenes(p.ctx.folder)
+            with st.popover(APP_SCENES_LABEL, icon=":material/play_circle:"):
+                for scene in choices:
+                    index = all_scenes.index(scene)
+                    st.button(scene.label, key=f"app_scene_{index}", width="stretch", on_click=_intro_scene,
+                              args=(index, p.ctx.summary))
         st.html(f'<div class="mr-chips">{"".join(header_chips(p, output))}</div>', width="content")
         for label, help_text, rows in popovers:
             with st.popover(label, help=help_text):
@@ -7032,7 +7043,8 @@ def render_intro(ctx: DataContext) -> None:
                 index = all_scenes.index(scene)
                 st.button(scene.label, key=f"intro_scene_{index}", icon=":material/play_circle:", width="stretch",
                           on_click=_intro_scene, args=(index, ctx.summary))
-    st.html('<div class="mr-lp"><div class="mr-lp-sec"><h2>지금 출발하면,<br>실제로 언제 도착할까요?</h2></div></div>')
+    st.html('<div class="mr-lp"><div class="mr-lp-sec"><h2>지금 출발하면,<br>실제로 언제 도착할까요?</h2>'
+            f'<p class="mr-lp-p">{esc(INTRO_HOWTO)}</p></div></div>')
     st.button(INTRO_START, key="intro_start2", type="primary", icon=":material/arrow_forward:", on_click=_go_app)
     st.divider()
     st.html(f'<div class="mr-lp-foot">{esc(INTRO_SOURCES)}</div>')
