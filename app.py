@@ -6803,7 +6803,7 @@ def render_intro(ctx: DataContext) -> None:
             '이 장면에서는 345번과 143번이 예측보다 늦게 와서 안내보다 18분 늦었습니다. 이 앱은 수집한 기록으로 실제 도착을 계산해 다른 길을 고릅니다.</p>'
             f'{intro_scene_html()}</div>'
             '<div class="mr-lp-sec"><div class="mr-lp-kicker">실제 기록으로 확인한 숫자</div>'
-            '<h2>강남·삼성 일대 버스 6개 노선, 따릉이, 신호를 금·토요일에 수집해 다시 계산했습니다</h2>'
+            '<h2>강남·삼성 일대 버스 6개 노선과 따릉이를 직접 수집해 다시 계산했습니다</h2>'
             '<div class="mr-lp-grid">'
             + "".join(f'<div class="mr-lp-card mr-lp-stat"><b>{esc(big)}</b><div>{esc(what)}</div><small>{esc(basis)}</small></div>'
                       for big, what, basis in INTRO_STATS)
